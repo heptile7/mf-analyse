@@ -1,0 +1,28 @@
+# environments / browser
+.venv/
+.mfc_browser_profile/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# caches (regenerated; NAV cache is ~270 MB)
+mf_nav_cache.json
+mf_amfi_master.json
+mf_benchmark.json
+mf_enrichment_cache.json
+mf_holdings_cache.json
+mf_amfi_portfolio_cache.json
+*.tmp
+
+# personal data — never commit
+mf_portfolio_db.json
+mf_portfolio_db*.json
+.mf_salt
+*.pdf
+
+# generated outputs
+mf_portfolio_report.html
+mf_portfolio_charts.png
+
+# local Claude settings
+.claude/settings.local.json

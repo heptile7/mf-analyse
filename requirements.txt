@@ -1,0 +1,12 @@
+requests
+pandas
+numpy
+matplotlib
+yfinance
+rich
+openpyxl
+
+# Optional — installed on demand by the holdings importers:
+# playwright        # MFCentral browser fetch (then: python -m playwright install chromium)
+# casparser         # CAMS / KFintech CAS PDF parsing
+# beautifulsoup4    # HTML table fallback for MFCentral scrape
