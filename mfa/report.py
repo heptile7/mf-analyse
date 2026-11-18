@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from mfa.config import CHART_FILE, HTML_REPORT_FILE, MC_N_SIMS_STANDARD, PASSIVE_DEBT_RETURN, PASSIVE_TER_DEBT, PASSIVE_TER_EQUITY, RISK_FREE_MONTHLY, SCORE_WEIGHTS
+from mfa.config import CHART_FILE, HTML_REPORT_FILE, MC_N_SIMS_STANDARD, MIDCAP_TICKERS, PASSIVE_DEBT_RETURN, PASSIVE_TER_DEBT, PASSIVE_TER_EQUITY, RISK_FREE_MONTHLY, SCORE_WEIGHTS
 from mfa.portfolio import portfolio_risk_metrics
 from mfa.ui import console, fmt_inr, pct_str, val_str
 from mfa.util import _safe_float, _save_output_file
@@ -762,10 +762,10 @@ tr:hover td{{background:#f8fafc}}
 <div class="section"><h2>📋 Methodology & Disclosures</h2>
 <ul style="font-size:12px;color:#475569;line-height:2;padding-left:20px;">
   <li><b>Data sources:</b> mfapi.in (NAV history), AMFI NAVAll.txt (official categories + AMC names), mfdata.in (AUM, TER, ratings, return ranks where available), yfinance (Nifty 50 / Midcap benchmarks).</li>
-  <li><b>Category benchmarks:</b> Mid cap → {benchmarks_used_str if 'benchmarks_used_str' in dir() else '^NSEMDCP50 or ^NSEI'}; Small cap → ^NSEI (no reliable 10Y smallcap ticker in yfinance).</li>
+  <li><b>Category benchmarks:</b> Mid cap → {' / '.join(MIDCAP_TICKERS)} (first available); Small cap → ^NSEI (no reliable 10Y smallcap ticker in yfinance).</li>
   <li><b>Survivorship bias:</b> mfapi.in lists active schemes only. Closed/merged funds (usually worst performers) excluded → historical returns overstated by ~0.5%. Addressed via extra 0.5% haircut on all projections.</li>
   <li><b>TER:</b> Uses mf_ter_overrides.json first, then mfdata.in expense ratio, then category defaults.</li>
-  <li><b>Scoring:</b> 11 components — ret_rel, alpha, sharpe, bear_alpha, vol, dd, rank_cons, cons, ter, aum, ext_rank. Most components are category-relative; AUM is treated as a liquidity/capacity guardrail, not pure size worship.</li>
+  <li><b>Scoring:</b> {len(SCORE_WEIGHTS[params['optimise']])} components ({params['optimise']} weights) — {', '.join(f'{k} {v}%' for k, v in SCORE_WEIGHTS[params['optimise']].items())}. Most components are category-relative; AUM is treated as a liquidity/capacity guardrail, not pure size worship.</li>
   <li><b>Monte Carlo:</b> Bootstrap resampling of fund's own historical monthly returns ({MC_N_SIMS_STANDARD} simulations). Not a forecast — past return distribution may not repeat.</li>
   <li><b>Tax:</b> LTCG 12.5% on equity gains above ₹1.25L/year (FY25-26). Debt: slab rate on full gains (no indexation post Apr 2023). Simplified — actual tax depends on redemption timing.</li>
   <li><b>Exit load:</b> Most equity funds charge 1% if redeemed within 12M of each SIP instalment. SIP investors holding &gt;12M typically pay 0%.</li>
