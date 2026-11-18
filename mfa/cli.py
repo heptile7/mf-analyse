@@ -13,7 +13,9 @@ from rich.progress import TextColumn
 from rich.prompt import Prompt
 from rich.table import Table
 
+from mfa.checkin import run_checkin
 from mfa.backtest import load_backtest_summary, print_backtest, run_backtest, save_backtest
+from mfa.summary import action_plan_html, in_short, print_in_short
 from mfa.tracking import evaluate_recommendations, nav_lookup_from, print_track_record, record_recommendation, track_record_html
 from mfa.config import INDEX_FUND_CODE, INDEX_FUND_NAME, AMFI_CACHE_FILE, AMFI_PORTFOLIO_CACHE_FILE, BENCHMARK_CACHE_FILE, CACHE_FILE, CHART_FILE, ENRICH_CACHE_FILE, HOLDINGS_CACHE_FILE
 from mfa.data import status
@@ -26,7 +28,7 @@ from mfa.holdings.db import get_user_portfolio, pan_key, save_action_plan, save_
 from mfa.holdings.fetch import fetch_portfolio_external, import_from_csv
 from mfa.holdings.plan import compute_tax_harvest_plan, generate_action_plan, print_action_plan, print_tax_harvest
 from mfa.portfolio import active_vs_passive, build_portfolio, classify_fund, compute_required_sip, compute_stepup_projection, compute_tax, compute_weight_drift, simulate_passive_baseline
-from mfa.report import generate_charts, generate_html_report, print_portfolio, print_stepup_analysis
+from mfa.report import generate_charts, generate_holdings_report, generate_html_report, print_portfolio, print_stepup_analysis
 from mfa.ui import console, fmt_inr, rich_ask_choice, rich_ask_corpus, rich_ask_int, rich_header, rich_summary
 from mfa.util import _safe_float
 
@@ -401,6 +403,14 @@ def portfolio_check_mode() -> None:
     # ── Tax harvest plan ─────────────────────────────────────────────────
     harvest = compute_tax_harvest_plan(analysis, nav_data, action_plan.get("exemption_remaining"))
     print_tax_harvest(harvest)
+    print_in_short(in_short(action_plan, harvest))
+    completeness = status.score_completeness(all_scored)
+    report_path = generate_holdings_report(
+        analysis, action_plan, harvest,
+        status_section=status.status_section_html(completeness),
+        status_banner=status.status_banner_html(completeness),
+        extra_html=action_plan_html(action_plan, harvest))
+    console.print(f"  [green]Holdings report: {report_path}[/green]")
 
     # ── Option to update holdings ─────────────────────────────────────────
     update = rich_ask_choice(
@@ -454,7 +464,17 @@ def backtest_mode() -> None:
     console.print(f"  [green]Backtest report: {path}[/green]")
 
 
-def main():
+def main(argv=None):
+    import argparse
+    ap = argparse.ArgumentParser(prog="MF_analyser.py", description="Mutual fund portfolio analyser")
+    ap.add_argument("--check-in", action="store_true",
+                    help="non-interactive monthly check of stored holdings (alerts only on change)")
+    ap.add_argument("--profile", help="portfolio key when more than one is stored")
+    ap.add_argument("--no-notify", action="store_true", help="skip the Windows notification")
+    args = ap.parse_args(argv)
+    if args.check_in:
+        sys.exit(run_checkin(args.profile, send_notification=not args.no_notify))
+
     console.print(Panel(
         "[bold cyan]MF Portfolio Analyser[/bold cyan]\n"
         "[dim]Data: mfapi.in · AMFI · mfdata.in · yfinance[/dim]\n"
@@ -599,6 +619,7 @@ def main():
     # ── Existing portfolio analysis (if PAN provided) ───────────────────
     # Reuse the already-scored universe from build_portfolio — no re-computation needed.
     holdings_analysis: list = []
+    action_plan = harvest = None
     if pan_hash:
         console.print("\n[bold blue]═══ EXISTING PORTFOLIO TRACKER ═══[/bold blue]")
         holdings_analysis = run_portfolio_manager(
@@ -619,6 +640,7 @@ def main():
         harvest = compute_tax_harvest_plan(holdings_analysis, nav_data,
                                            action_plan.get("exemption_remaining"))
         print_tax_harvest(harvest)
+        print_in_short(in_short(action_plan, harvest))
 
     # Tax, passive, advantage
     console.print("[dim]Computing tax estimate...[/dim]")
@@ -649,7 +671,8 @@ def main():
     print_track_record(track_rows)
     if record_recommendation(portfolio, params["optimise"], index_now):
         console.print("  [dim]Recommendation saved — future runs will show how it did vs the index fund.[/dim]")
-    extra_html = (track_record_html(track_rows, load_backtest_summary())
+    extra_html = (action_plan_html(action_plan, harvest)
+                  + track_record_html(track_rows, load_backtest_summary())
                   + status.status_section_html(completeness))
 
     # ── Step-up SIP analysis ──────────────────────────────────────────────

@@ -27,6 +27,8 @@ EXTRA_NAV_CACHE_FILE = os.path.join(_DIR, "mf_extra_nav_cache.json")
 BACKTEST_HTML_FILE   = os.path.join(_DIR, "mf_backtest_report.html")
 BACKTEST_SUMMARY_FILE = os.path.join(_DIR, "mf_backtest_summary.json")
 RECOMMENDATIONS_FILE = os.path.join(_DIR, "mf_recommendations.json")
+HOLDINGS_REPORT_FILE = os.path.join(_DIR, "mf_holdings_report.html")
+CHECKIN_REPORT_PATTERN = os.path.join(_DIR, "mf_checkin_{date}.html")
 EXIT_LOAD_OVERRIDE_FILE = os.path.join(_DIR, "mf_exit_load_overrides.json")
 
 # Exit load (pct, days): typical equity funds charge 1% within 1 year; debt mostly 0.

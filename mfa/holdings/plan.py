@@ -8,6 +8,7 @@ from mfa.holdings.costs import (ExemptionBudget, breakeven_months, direct_switch
                                 required_outperformance_pa, switch_cost)
 from mfa.data.nav import fetch_scheme_nav
 from mfa.portfolio import ALLOCATION_WEIGHTS
+from mfa.summary import plain_buy_more, plain_direct, plain_gap, plain_overlap, plain_switch
 from mfa.ui import console, fmt_inr
 
 
@@ -280,12 +281,14 @@ def print_action_plan(plan: dict) -> None:
 
     step = 0
 
-    def _step(label: str, colour: str, title: str, detail: str) -> None:
+    def _step(label: str, colour: str, title: str, detail: str, plain: str = "") -> None:
         nonlocal step
         step += 1
         console.print(
             f"  [bold {colour}]STEP {step}  [{label}][/bold {colour}]  {title}"
         )
+        if plain:
+            console.print(f"           {plain}")
         for line in detail.strip().splitlines():
             console.print(f"  [dim]         {line.strip()}[/dim]")
         console.print()
@@ -296,7 +299,7 @@ def print_action_plan(plan: dict) -> None:
               f"Duplicate {ov['category']} exposure",
               f"You hold {len(ov['funds'])} funds in the same category: "
               f"{', '.join(ov['funds'][:3])}\n"
-              f"Consolidate to the highest-scoring one to reduce overlap.")
+              f"Consolidate to the highest-scoring one to reduce overlap.", plain_overlap(ov))
 
     # ── SWITCHES / EXITS ──────────────────────────────────────────────────
     for sw in plan["switches"]:
@@ -322,7 +325,7 @@ def print_action_plan(plan: dict) -> None:
         _step(urgency, "red" if urgency == "EXIT NOW" else "yellow",
               f"{h.get('scheme_name','?')[:34]} → {(rep or {}).get('name','?')[:30]}",
               f"FROM: {from_str}\n  TO:   {to_str}\n  {cost_str}"
-              + ("\n  " + " · ".join(extra) if extra else ""))
+              + ("\n  " + " · ".join(extra) if extra else ""), plain_switch(sw))
 
     # ── REGULAR → DIRECT ─────────────────────────────────────────────────
     for ds in plan.get("direct_switches", []):
@@ -335,7 +338,7 @@ def print_action_plan(plan: dict) -> None:
               else "Breakeven: n/a")
         _step("DIRECT PLAN", "magenta",
               f"{h.get('scheme_name','?')[:40]} — Regular plan",
-              f"{ds['advice']}\n  {gap}\n  {_cost_lines(ds['cost'])}\n  {be}")
+              f"{gap}\n  {_cost_lines(ds['cost'])}\n  {be}", plain_direct(ds))
 
     # ── GAP FILLS (new category coverage) ────────────────────────────────
     for gf in plan["gap_fills"]:
@@ -346,7 +349,7 @@ def print_action_plan(plan: dict) -> None:
               f"Fund: {f.get('name','?')[:40]}\n"
               f"Rank: {f.get('category_rank','?')}/{f.get('category_size','?')}  "
               f"Score: {f.get('score') or '?'}  "
-              f"3Y: {f.get('return_3y') or '?'}%")
+              f"3Y: {f.get('return_3y') or '?'}%", plain_gap(gf))
 
     # ── BUY MORE (increase underweight existing positions) ────────────────
     for bm in plan["buy_mores"]:
@@ -356,7 +359,7 @@ def print_action_plan(plan: dict) -> None:
               f"Top performer in {h.get('category','?')} "
               f"(rank {h.get('category_rank','?')}/{h.get('category_size','?')})\n"
               f"Slot '{bm['slot']}' is {bm['gap_pct']:.1f}% below target — "
-              f"increase existing SIP rather than opening a new fund")
+              f"increase existing SIP rather than opening a new fund", plain_buy_more(bm))
 
     # ── ALREADY RECOMMENDED ───────────────────────────────────────────────
     for h in plan["already_recommended"]:

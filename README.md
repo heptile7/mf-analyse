@@ -61,6 +61,19 @@ The tool resolves holdings automatically, whether they come as ISINs, registrar 
 - [mfdata.in](https://mfdata.in): TER, AUM, valuation and ranks. Optional; the tool falls back to NAV-only ranking.
 - yfinance: Nifty 50 and Midcap benchmarks
 
+## Monthly check-in
+```bash
+.venv/Scripts/python MF_analyser.py --check-in          # non-interactive; add --no-notify to skip the toast
+powershell -ExecutionPolicy Bypass -File scriptsegister_checkin_task.ps1   # run it on the 1st of every month
+```
+- Re-rates your stored holdings and writes `mf_checkin_<date>.html`.
+- Shows a **Windows notification only when something changed**:
+  - a rating got worse, or a fund dropped a quintile
+  - the January–March tax-harvest window is open
+  - old action-plan items are still pending
+  - a critical data source newly failed
+- Everything stays on your PC.
+
 ## Data quality
 Every run prints a **Data status** table: each source's freshness and coverage, and how many of the 7 score components had real data. The HTML report repeats it, with a warning banner when anything is degraded.
 - If under 80% of the fund universe loads, build mode **refuses to recommend** rather than pick from a partial list.

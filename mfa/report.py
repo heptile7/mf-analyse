@@ -13,8 +13,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from mfa.config import CHART_FILE, HTML_REPORT_FILE, MC_N_SIMS_STANDARD, MIDCAP_TICKERS, PASSIVE_DEBT_RETURN, PASSIVE_TER_DEBT, PASSIVE_TER_EQUITY, RISK_FREE_MONTHLY, SCORE_WEIGHTS
+from mfa.config import CHART_FILE, HOLDINGS_REPORT_FILE, HTML_REPORT_FILE, MC_N_SIMS_STANDARD, MIDCAP_TICKERS, PASSIVE_DEBT_RETURN, PASSIVE_TER_DEBT, PASSIVE_TER_EQUITY, RISK_FREE_MONTHLY, SCORE_WEIGHTS
 from mfa.portfolio import portfolio_risk_metrics
+from mfa.summary import ACTION_STYLES, action_style
 from mfa.ui import console, fmt_inr, pct_str, val_str
 from mfa.util import _safe_float, _save_output_file
 
@@ -157,8 +158,7 @@ def generate_charts(
     # ── BR: Existing portfolio (if available) OR score breakdown ─────────
     valid_h = [h for h in holdings_analysis if (h.get("current_value") or 0) > 0]
     if valid_h:
-        ACTION_COLORS = {"HOLD": "#16a34a", "BUY MORE": "#2563eb",
-                         "SELL": "#dc2626", "UNKNOWN": "#94a3b8"}
+        ACTION_COLORS = {a: v[2] for a, v in ACTION_STYLES.items() if a != "SELL"}
         names_h  = [h.get("scheme_name", "?")[:30] for h in valid_h]
         vals_h   = [h.get("current_value", 0) / 1e5 for h in valid_h]
         bar_cols = [ACTION_COLORS.get(h.get("action", "UNKNOWN"), "#94a3b8") for h in valid_h]
@@ -172,8 +172,9 @@ def generate_charts(
                          fontsize=10, fontweight="bold")
         ax_br.set_xlabel("₹ Lakhs", fontsize=9)
         ax_br.tick_params(axis="y", labelsize=7.5)
+        shown = {h.get("action", "UNKNOWN") for h in valid_h}
         ax_br.legend(handles=[Patch(color=c, label=a) for a, c in ACTION_COLORS.items()
-                               if a != "UNKNOWN"], fontsize=7, loc="lower right")
+                               if a in shown], fontsize=7, loc="lower right")
     else:
         # Score component breakdown as stacked bar
         comps = list(SCORE_WEIGHTS["balanced"].keys())
@@ -278,23 +279,16 @@ def generate_html_report(
     # ── Existing portfolio section (only when holdings were fetched) ─────
     _existing_portfolio_html = ""
     if holdings_analysis:
-        _ACTION_STYLE = {
-            "HOLD":    ("background:#dcfce7;color:#15803d;", "✅ HOLD"),
-            "SELL":    ("background:#fee2e2;color:#b91c1c;", "🔴 SELL"),
-            "BUY MORE":("background:#dbeafe;color:#1d4ed8;", "💰 BUY MORE"),
-            "UNKNOWN": ("background:#f1f5f9;color:#64748b;", "❓ UNKNOWN"),
-        }
         total_cur_val = sum(h.get("current_value") or 0 for h in holdings_analysis)
         action_counts = {}
         for h in holdings_analysis:
             action_counts[h.get("action","?")] = action_counts.get(h.get("action","?"), 0) + 1
 
-        _unk = _ACTION_STYLE["UNKNOWN"]
         summary_chips = " &nbsp; ".join(
             "<span style='{s}padding:3px 10px;border-radius:6px;font-size:12px;font-weight:600;'>"
             "{lbl} &times; {n}</span>".format(
-                s=_ACTION_STYLE.get(a, _unk)[0],
-                lbl=_ACTION_STYLE.get(a, _unk)[1],
+                s=action_style(a)[0],
+                lbl=action_style(a)[1],
                 n=n,
             )
             for a, n in sorted(action_counts.items())
@@ -303,7 +297,7 @@ def generate_html_report(
         holding_rows = ""
         for h in holdings_analysis:
             action     = h.get("action", "UNKNOWN")
-            astyle, alabel = _ACTION_STYLE.get(action, _ACTION_STYLE["UNKNOWN"])
+            astyle, alabel, _ = action_style(action)
             cr, cs     = h.get("category_rank"), h.get("category_size")
             rank_s     = f"{cr}/{cs}" if cr and cs else "—"
             top_pct    = f"{(cs-cr)/cs*100:.0f}%" if (cr and cs) else "—"
@@ -940,3 +934,44 @@ def print_stepup_analysis(stepup: dict) -> None:
     if len(stepup["stepup_schedule"]) > 10:
         st.add_row("...", "...")
     console.print(st)
+
+
+def generate_holdings_report(analysis: list, plan: dict | None, harvest: dict | None,
+                             status_section: str = "", status_banner: str = "",
+                             extra_html: str = "", path: str | None = None,
+                             title: str = "Your portfolio check") -> str:
+    """Self-contained check-mode report: plain-words actions, holdings, data status."""
+    import html as _h
+    esc = _h.escape
+    rows = []
+    for h in analysis:
+        css, label, _ = action_style(h.get("action"))
+        cr, cs = h.get("category_rank"), h.get("category_size")
+        ret = (f"{h['xirr']:.1f}% XIRR" if h.get("xirr") is not None
+               else (f"~{h['holding_cagr']:.1f}%" if h.get("holding_cagr") is not None else "—"))
+        rows.append(
+            f"<tr><td>{esc(h.get('scheme_name', '?'))}{' <i>(Regular)</i>' if h.get('is_regular') else ''}</td>"
+            f"<td>{esc(h.get('category') or '—')}</td><td>{fmt_inr(h.get('current_value') or 0)}</td>"
+            f"<td>{ret}</td><td>{f'{cr}/{cs}' if cr and cs else '—'}</td>"
+            f"<td><span style='{css}padding:2px 8px;border-radius:6px;font-size:12px;font-weight:600'>{label}</span>"
+            f"<div style='font-size:11px;color:#64748b'>{esc(h.get('action_reason', ''))}</div></td></tr>")
+    total = sum(h.get("current_value") or 0 for h in analysis)
+    page = f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Holdings Check</title>
+<style>
+body{{margin:0;background:#f8fafc;color:#0f172a;font:14px/1.55 system-ui,sans-serif}}
+main{{max-width:1100px;margin:0 auto;padding:24px 16px}}
+.section{{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px;margin:16px 0;overflow-x:auto}}
+table{{border-collapse:collapse;width:100%;font-size:13px}}th,td{{padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}}
+@media (prefers-color-scheme:dark){{body{{background:#0b1220;color:#e2e8f0}}.section{{background:#111a2e;border-color:#1e293b}}th,td{{border-color:#1e293b}}}}
+</style></head><body><main>
+<h1>{esc(title)}</h1>
+<p style="color:#64748b">{datetime.now():%d %b %Y} · {len(analysis)} holdings · {fmt_inr(total)} · Not SEBI-registered advice.</p>
+{status_banner}
+{extra_html}
+<div class="section"><h2>📂 Holdings</h2><table><tr><th>Fund</th><th>Category</th><th>Value</th><th>Return p.a.</th><th>Rank</th><th>Rating</th></tr>{''.join(rows)}</table>
+<p style="font-size:11px;color:#94a3b8">~ = approximate (no transaction history; import a CAS for exact XIRR).</p></div>
+{status_section}
+</main></body></html>"""
+    _pg = page.encode("utf-8")
+    return _save_output_file(lambda fh: fh.write(_pg), path or HOLDINGS_REPORT_FILE)

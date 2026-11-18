@@ -10,7 +10,8 @@ This is not SEBI-registered advice. Keep that disclaimer in any user-facing outp
 ## Run
 
 ```bash
-.venv/Scripts/python MF_analyser.py              # interactive; 3 modes: build / check holdings / clear caches
+.venv/Scripts/python MF_analyser.py              # interactive; 4 modes: build / check holdings / clear caches / backtest
+.venv/Scripts/python MF_analyser.py --check-in   # non-interactive monthly check (see Check-in rules)
 .venv/Scripts/python -m pytest -q                # offline tests (tests/), ~2s
 .venv/Scripts/python -m pyflakes mfa             # lint; only the playwright/casparser probe imports should warn
 ```
@@ -50,6 +51,8 @@ Each layer imports only from the layers to its left. Keep it that way.
 | `mfa/holdings/analysis.py` | Holdings resolution and rating (see below) |
 | `mfa/holdings/costs.py` | Switch economics: `build_lots` (FIFO from CAS transactions, else one approximate lot), `switch_cost` (exit load, STCG/LTCG, ELSS lock-in), the shared `ExemptionBudget`, `measured_cost_gap_pa` (Regular vs Direct NAV), breakeven |
 | `mfa/holdings/plan.py` | Action plan (switch / gap-fill / buy-more) and tax-harvest plan |
+| `mfa/checkin.py` | `--check-in`: non-interactive re-rating. `compute_alerts` (pure) diffs against the last snapshot in the DB's `checkins` list; a Windows toast is sent through Windows PowerShell 5.1 WinRT (not pwsh 7); output is `mf_checkin_<date>.html` |
+| `mfa/summary.py` | Plain-words layer: `plain_*` one-liners, `in_short`, `action_plan_html`, and `ACTION_STYLES`, the single style map for every rating (report, chart and check-in all use it) |
 | `mfa/cli.py` | `main`, `run_questionnaire`, `run_portfolio_manager`, `portfolio_check_mode` |
 
 ## Data and caches (project root, all git-ignored)
@@ -147,6 +150,11 @@ How Regular plans are handled:
   - `scripts/guard.py`, which blocks personal-data files, files over 2 MB, PAN-like strings and email addresses in staged changes
 
   It never force-pushes and never bypasses the guard.
+
+## Check-in rules
+- `run_checkin` must never prompt. pytest's closed stdin enforces this in `tests/test_checkin.py`. Don't call `prompt_missing_cost_basis`, `show_pending_action_plan` or `rich_ask_*` from it.
+- Alerts are **change-based**: worse rating, quintile drop, newly failing source. They must stay quiet when nothing changed; noisy alerts get ignored.
+- `scripts/register_checkin_task.ps1` uses the Task Scheduler COM API, because `New-ScheduledTaskTrigger` has no monthly trigger. It only runs when the user is logged on (toasts need a session).
 
 ## Conventions
 
