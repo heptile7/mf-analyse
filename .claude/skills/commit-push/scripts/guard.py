@@ -18,7 +18,8 @@ FORBIDDEN = [
 MAX_BYTES = 2 * 1024 * 1024
 PAN_RE = re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b")
 PAN_ALLOW = {"ABCDE1234F"}                       # fake PAN used in tests
-EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+# Needs a real local part before "@" (so decorators like @pytest.fixture never match)
+EMAIL_RE = re.compile(r"(?<![\w.+-])\w[\w.+-]*@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}")
 EMAIL_ALLOW = {"noreply@anthropic.com"}
 
 
@@ -44,6 +45,7 @@ def main() -> int:
             continue
         if not line.startswith("+") or line.startswith("+++"):
             continue
+        line = line[1:]                                  # drop the diff marker
         for m in PAN_RE.findall(line):
             if m not in PAN_ALLOW:
                 problems.append(f"PAN-like value in {current}: {m[:2]}***{m[-2:]}")
