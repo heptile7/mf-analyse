@@ -8,7 +8,7 @@ import requests
 
 from mfa.config import ENRICH_CACHE_FILE, ENRICH_CACHE_MAX_AGE_HRS, MFDATA_BASE_URL
 from mfa.ui import console
-from mfa.util import _cache_busted, _safe_float, _save_output_file
+from mfa.util import CircuitBreaker, _cache_busted, _safe_float, _save_output_file
 
 
 def _normalise_enrichment(row: dict) -> dict:
@@ -121,13 +121,18 @@ def fetch_fund_enrichment(nav_data: list = None) -> dict:
     missing_detail = [c for c in wanted if c not in data]
     detail_codes = list(data.keys())[:50] + missing_detail[:50]
     seen: set = set()
+    breaker = CircuitBreaker()
     for code in detail_codes:
         if code in seen:
             continue
+        if breaker.open:
+            console.print("  [yellow]mfdata.in not responding — skipped remaining detail lookups.[/yellow]")
+            break
         seen.add(code)
         try:
             r = requests.get(f"{MFDATA_BASE_URL}/schemes/{code}",
                              timeout=12, headers=headers)
+            breaker.result(r.status_code < 500)
             if r.status_code in (404, 429):
                 continue
             r.raise_for_status()
@@ -136,6 +141,9 @@ def fetch_fund_enrichment(nav_data: list = None) -> dict:
             if row:
                 data.setdefault(str(code), {})
                 _merge_enrichment(data[str(code)], row)
+        except requests.RequestException:
+            breaker.result(False)
+            continue
         except Exception:
             continue
         time.sleep(0.08)

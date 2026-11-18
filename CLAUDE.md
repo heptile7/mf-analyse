@@ -161,6 +161,7 @@ How Regular plans are handled:
 - Write output files through `_save_output_file` (temp file, then `os.replace`, with fallbacks). This works around Windows file locks and Controlled Folder Access.
 - `save_portfolio_db` has its own fallback chain of paths.
 - Network fetchers must degrade gracefully: print a yellow warning and return `{}` or `[]`. They must never crash the run. The degradation must also be **visible**: record it in `mfa.data.status`, so the terminal table and report banner show it.
+- Any per-fund network loop must use `mfa.util.CircuitBreaker`: stop after 5 consecutive timeouts or 5xx responses. A down mfdata.in (522) used to hang runs for hours, because every call waited out its timeout.
 - Put new constants in `mfa/config.py`. Import names explicitly (`from mfa.x import a, b`); there are no star imports.
 - Tests patch module globals where they are *used*, e.g. `monkeypatch.setattr(mfa.holdings.db, "PORTFOLIO_DB_FILE", ...)`.
 - Tests must stay offline: build tiny fake `amfi_master` and `nav_data` fixtures (see `tests/test_core.py`).

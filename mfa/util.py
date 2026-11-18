@@ -73,3 +73,22 @@ def _safe_float(v) -> float | None:
         return float(str(v).replace(",", "").replace("%", "").strip())
     except Exception:
         return None
+
+
+class CircuitBreaker:
+    """Stop calling a source after `limit` consecutive failures (timeouts / 5xx).
+
+    A down server answering each request only after a long timeout can otherwise
+    turn a per-fund loop into an hours-long hang (seen with mfdata.in 522s).
+    """
+
+    def __init__(self, limit: int = 5):
+        self.limit = limit
+        self.failures = 0
+
+    def result(self, ok: bool) -> None:
+        self.failures = 0 if ok else self.failures + 1
+
+    @property
+    def open(self) -> bool:
+        return self.failures >= self.limit

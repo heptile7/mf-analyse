@@ -12,7 +12,7 @@ import requests
 from mfa.config import AMFI_CACHE_FILE, AMFI_CACHE_MAX_AGE_HRS, AMFI_NAV_URL, AMFI_PORTFOLIO_CACHE_FILE, ENRICH_CACHE_MAX_AGE_HRS, HOLDINGS_CACHE_FILE, MFDATA_BASE_URL
 from mfa.data.enrichment import fetch_fund_enrichment
 from mfa.ui import console
-from mfa.util import _cache_busted, _safe_float, _save_output_file
+from mfa.util import CircuitBreaker, _cache_busted, _safe_float, _save_output_file
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -270,8 +270,12 @@ def fetch_fund_portfolios(nav_data: list = None, enrichment: dict = None) -> dic
 
     if missing:
         console.print(f"  [cyan]Filling {len(missing)} gaps via mfdata.in...[/cyan]")
+    breaker = CircuitBreaker()
     for code in missing:
         if rate_limited:
+            break
+        if breaker.open:
+            console.print("  [yellow]mfdata.in not responding — skipped remaining holdings lookups.[/yellow]")
             break
         for endpoint in (
             f"{MFDATA_BASE_URL}/schemes/{code}/portfolio",
@@ -279,6 +283,7 @@ def fetch_fund_portfolios(nav_data: list = None, enrichment: dict = None) -> dic
         ):
             try:
                 r = requests.get(endpoint, timeout=8, headers=headers)
+                breaker.result(r.status_code < 500)
                 if r.status_code == 404:
                     continue
                 if r.status_code == 429:
@@ -304,6 +309,11 @@ def fetch_fund_portfolios(nav_data: list = None, enrichment: dict = None) -> dic
                 if entry:
                     mfdata_hits += 1
                 break
+            except requests.RequestException:
+                breaker.result(False)
+                if breaker.open:
+                    break
+                continue
             except Exception:
                 continue
         time.sleep(0.05)
