@@ -16,11 +16,13 @@ A terminal tool for Indian mutual fund investors. It builds a SIP portfolio from
   - the SIP required to reach your target corpus
   - the effect of an annual step-up
 - Writes a **self-contained HTML report** (`mf_portfolio_report.html`) and a **PNG chart pack** (`mf_portfolio_charts.png`).
+- **Track record:** every recommendation is saved with that day's NAVs in `mf_recommendations.json`, which stays local. Later runs show how those picks did against the Nifty 50 index fund over the same period.
 
 **2. Check your existing portfolio**
 - Rates each holding **BUY MORE / HOLD / WATCH / SWITCH / EXIT** by its rank within its category.
 - Regular-plan holdings are ranked through their Direct counterpart, with a note on the cost difference.
-- Builds an action plan (switches, gap fills, top-ups) and an **LTCG tax-harvest plan** that uses the yearly ₹1.25 L exemption.
+- Builds an action plan (switches, gap fills, top-ups). Plans are kept as a history, and pending switches show how the kept fund and the suggested fund have done since the plan was made.
+- Builds an **LTCG tax-harvest plan** that uses the yearly ₹1.25 L exemption.
 
 **3. Refresh the data caches**
 

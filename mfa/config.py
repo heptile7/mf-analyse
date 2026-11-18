@@ -26,6 +26,7 @@ PAN_SALT_FILE        = os.path.join(_DIR, ".mf_salt")
 EXTRA_NAV_CACHE_FILE = os.path.join(_DIR, "mf_extra_nav_cache.json")
 BACKTEST_HTML_FILE   = os.path.join(_DIR, "mf_backtest_report.html")
 BACKTEST_SUMMARY_FILE = os.path.join(_DIR, "mf_backtest_summary.json")
+RECOMMENDATIONS_FILE = os.path.join(_DIR, "mf_recommendations.json")
 
 # Passive yardstick: a real index fund (total return, net of its own costs) beats
 # comparing against the ^NSEI price index, which ignores dividends.

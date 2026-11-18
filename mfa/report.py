@@ -216,7 +216,10 @@ def generate_html_report(
     holdings_analysis: list = None,
     cohort: dict = None,
     portfolio_holdings: dict = None,
+    extra_sections_html: str = "",
 ) -> str:
+    """extra_sections_html: pre-rendered <div class="section"> blocks (track record,
+    action plan, data status, ...) inserted before the existing-portfolio section."""
 
     def money(v): return fmt_inr(v) if v else "-"
     def pct(v, dp=1): return f"{v:.{dp}f}%" if v is not None else "-"
@@ -754,6 +757,8 @@ tr:hover td{{background:#f8fafc}}
   Rebalance when any fund deviates &gt;5pp from target. Growth-heavy (small/mid cap) funds typically
   drift upward in bull markets.
 </p></div>
+
+{extra_sections_html}
 
 {_existing_portfolio_html}
 

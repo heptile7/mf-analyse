@@ -10,6 +10,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 
 from mfa.config import PAN_SALT_FILE, PORTFOLIO_DB_FILE
+from mfa.tracking import since_return
 from mfa.ui import console, fmt_inr, rich_ask_choice
 
 
@@ -130,6 +131,10 @@ def _serialise_plan_item(item: dict, kind: str) -> dict:
             "from_code":      item["from"].get("scheme_code",""),
             "from_rank":      item["from"].get("category_rank"),
             "from_score":     item["from"].get("score"),
+            # NAVs at plan time, so later runs can show kept-vs-suggested since then
+            "from_amfi_code": item["from"].get("amfi_code") or item["from"].get("scheme_code",""),
+            "from_nav":       item["from"].get("current_nav"),
+            "to_nav":         (item.get("to") or {}).get("latest_nav"),
             "to":             _fund_stub(item.get("to")),
             "exit_load_warn": item.get("exit_load_warn", False),
             "ltcg_rs":        item.get("ltcg_rs", 0),
@@ -159,6 +164,9 @@ def _serialise_plan_item(item: dict, kind: str) -> dict:
     return {}
 
 
+ACTION_PLAN_HISTORY = 24
+
+
 def save_action_plan(pan_hash: str, plan: dict) -> None:
     """Persist the action plan items with 'pending' status into the portfolio DB."""
     items = []
@@ -171,11 +179,18 @@ def save_action_plan(pan_hash: str, plan: dict) -> None:
 
     db = load_portfolio_db()
     port = db["portfolios"].setdefault(pan_hash, {"holdings": [], "last_updated": ""})
-    port["action_plan"] = {
+    entry = {
         "generated_on": datetime.now().strftime("%Y-%m-%d"),
         "strategy":     plan.get("strategy", "balanced"),
         "items":        items,
     }
+    # Keep a history instead of overwriting; seed it with a pre-history plan.
+    history = port.setdefault("action_plans", [])
+    if not history and port.get("action_plan"):
+        history.append(port["action_plan"])
+    history.append(entry)
+    port["action_plans"] = history[-ACTION_PLAN_HISTORY:]
+    port["action_plan"]  = entry          # latest — what pending-items logic reads
     db["portfolios"][pan_hash] = port
     save_portfolio_db(db)
 
@@ -197,6 +212,19 @@ def update_action_plan_status(pan_hash: str, item_index: int, status: str) -> No
         port["action_plan"] = plan
         db["portfolios"][pan_hash] = port
         save_portfolio_db(db)
+
+
+def _since_plan_note(it: dict) -> str:
+    """' · since then: kept +a% vs suggested +b%' when NAVs at plan time are known."""
+    try:
+        kept = since_return(it.get("from_amfi_code"), it.get("from_nav"), {})
+        sugg = since_return((it.get("to") or {}).get("scheme_code"), it.get("to_nav"), {})
+    except Exception:
+        return ""
+    if kept is None or sugg is None:
+        return ""
+    col = "green" if sugg >= kept else "red"
+    return f"  [dim]· since then: kept {kept:+.1f}% vs[/dim] [{col}]suggested {sugg:+.1f}%[/{col}]"
 
 
 def show_pending_action_plan(pan_hash: str) -> bool:
@@ -233,6 +261,7 @@ def show_pending_action_plan(pan_hash: str) -> bool:
         if kind == "switch":
             desc = (f"{it.get('from_name','?')[:36]} → "
                     f"{(it.get('to') or {}).get('name','?')[:30]}")
+            desc += _since_plan_note(it)
         elif kind == "gap_fill":
             desc = (f"{it.get('slot','?')} gap — "
                     f"add {fmt_inr(it.get('sip',0))}/mo to "

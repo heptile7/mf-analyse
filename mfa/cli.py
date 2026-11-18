@@ -13,7 +13,8 @@ from rich.progress import TextColumn
 from rich.prompt import Prompt
 from rich.table import Table
 
-from mfa.backtest import print_backtest, run_backtest, save_backtest
+from mfa.backtest import load_backtest_summary, print_backtest, run_backtest, save_backtest
+from mfa.tracking import evaluate_recommendations, nav_lookup_from, print_track_record, record_recommendation, track_record_html
 from mfa.config import INDEX_FUND_CODE, INDEX_FUND_NAME, AMFI_CACHE_FILE, AMFI_PORTFOLIO_CACHE_FILE, BENCHMARK_CACHE_FILE, CACHE_FILE, CHART_FILE, ENRICH_CACHE_FILE, HOLDINGS_CACHE_FILE
 from mfa.data.amfi import fetch_amfi_master, fetch_fund_portfolios
 from mfa.data.enrichment import fetch_fund_enrichment
@@ -628,6 +629,15 @@ def main():
 
     print_portfolio(portfolio, params, tax, passive_mc, advantage, req_sip)
 
+    # ── Track record: how did past recommendations do vs the index fund? ──
+    index_df  = fetch_scheme_nav(INDEX_FUND_CODE)
+    index_now = float(index_df["nav"].iloc[-1]) if index_df is not None and not index_df.empty else None
+    track_rows = evaluate_recommendations(nav_lookup_from(nav_data), index_now)
+    print_track_record(track_rows)
+    if record_recommendation(portfolio, params["optimise"], index_now):
+        console.print("  [dim]Recommendation saved — future runs will show how it did vs the index fund.[/dim]")
+    extra_html = track_record_html(track_rows, load_backtest_summary())
+
     # ── Step-up SIP analysis ──────────────────────────────────────────────
     stepup_pct = rich_ask_int(
         "Annual SIP step-up % (e.g. 10 = grow SIP 10%/yr; 0 to skip)", 0, 50)
@@ -705,6 +715,7 @@ def main():
                 holdings_analysis=holdings_analysis or None,
                 cohort=cohort,
                 portfolio_holdings=portfolio_holdings,
+                extra_sections_html=extra_html,
             )
             console.print(f"  [green]HTML report: {html_path}[/green]")
             break

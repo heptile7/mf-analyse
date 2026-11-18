@@ -42,9 +42,10 @@ Each layer imports only from the layers to its left. Keep it that way.
 | `mfa/scoring.py` | TER resolution (overrides → mfdata → `DEFAULT_TER`), `score_fund` |
 | `mfa/portfolio.py` | `score_universe` (passes 1–5, with no file or network I/O, so it can be reused by the backtest), `build_portfolio` (slot selection, correlation and AMC caps), SIP allocation, Monte Carlo, tax, passive baseline, required SIP, step-up |
 | `mfa/backtest.py` | Walk-forward backtest. It truncates NAV and benchmark data to each cutoff, calls `score_universe` with no enrichment or TER overrides, and judges picks on forward CAGR against a naive rule and the index fund |
-| `mfa/report.py` | `generate_charts`, `generate_html_report` (self-contained, base64 images), `print_portfolio` |
+| `mfa/tracking.py` | Track record. `record_recommendation` (build mode) writes `mf_recommendations.json`; `evaluate_recommendations` compares weighted NAV returns with the index fund; `since_return` is used for pending action-plan switches |
+| `mfa/report.py` | `generate_charts`, `generate_html_report` (self-contained, base64 images; extra sections come in through `extra_sections_html`), `print_portfolio` |
 | `mfa/holdings/fetch.py` | Importers: MFCentral browser capture (Playwright, OTP typed by the user), CAS PDF (casparser), CSV |
-| `mfa/holdings/db.py` | `mf_portfolio_db.json` keyed by `pan_key(pan)`; stored action plans |
+| `mfa/holdings/db.py` | `mf_portfolio_db.json` keyed by `pan_key(pan)`. `action_plan` is the latest plan (pending-item logic reads it); `action_plans` is the history, capped at 24. Switch items store the from/to NAVs at plan time |
 | `mfa/holdings/analysis.py` | Holdings resolution and rating (see below) |
 | `mfa/holdings/plan.py` | Action plan (switch / gap-fill / buy-more) and tax-harvest plan |
 | `mfa/cli.py` | `main`, `run_questionnaire`, `run_portfolio_manager`, `portfolio_check_mode` |
