@@ -14,6 +14,7 @@ import pandas as pd
 import requests
 
 from mfa.config import BASE_URL, CACHE_FILE, CACHE_MAX_AGE_HRS, EXTRA_NAV_CACHE_FILE, DEBT_CATEGORY_KW, EQUITY_CATEGORY_KW, EXCLUDE_KEYWORDS, MAX_WORKERS, REQUIRED_KEYWORDS, SLEEP_BETWEEN
+from mfa.data import status
 from mfa.ui import console
 from mfa.util import _cache_busted, _save_output_file
 
@@ -31,6 +32,9 @@ def load_cache() -> dict:
             console.print(f"  [yellow]NAV cache {age:.1f}h old — will re-fetch.[/yellow]")
             return {}
         console.print(f"  [green]NAV cache: {len(data.get('data',[]))} funds, {age:.1f}h old.[/green]")
+        cov = data.get("coverage")
+        status.record("NAV history (mfapi.in)", cov is None or cov >= 0.95,
+                      f"{len(data.get('data', []))} funds (cache {age:.1f}h old)", coverage=cov)
         return data
     except Exception:
         return {}
@@ -147,6 +151,9 @@ def fetch_and_cache() -> list:
         f"  [{colour}]NAV coverage {coverage:.0%}: fetched {len(results) - merged}/{attempted}"
         f", {merged} from previous cache, {attempted - len(results)} missing"
         f" ({n_short} skipped: <1Y history).[/{colour}]")
+    status.record("NAV history (mfapi.in)", coverage >= 0.95,
+                  f"{len(results)} funds; {merged} reused from previous cache, "
+                  f"{attempted - len(results)} missing", coverage=round(coverage, 4))
     if partial:
         console.print("  [red]Too many NAV fetches failed — cache marked partial; "
                       "re-run later for a complete universe.[/red]")

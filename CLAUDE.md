@@ -37,6 +37,7 @@ Each layer imports only from the layers to its left. Keep it that way.
 | `mfa/data/nav.py` | mfapi.in NAV histories, which are the scoring universe (Direct + Growth only) |
 | `mfa/data/amfi.py` | AMFI NAVAll master (code → category, AMC, ISINs, name with plan/option, latest NAV), AUM, monthly portfolio disclosures |
 | `mfa/data/market.py` | yfinance benchmarks (`YFINANCE_OK` guard), market regime signal |
+| `mfa/data/status.py` | Data-status registry. `record` and `assess_sources` fill it; `score_completeness` reports which of the 7 components had real inputs; build mode refuses below 80% NAV coverage (`nav_refusal_reason`); `print_status`, banner and section HTML |
 | `mfa/data/enrichment.py` | mfdata.in TER, AUM, PE and category ranks |
 | `mfa/metrics.py` | CAGR, rolling returns, alpha/beta, capture ratios, cohort statistics |
 | `mfa/scoring.py` | TER resolution (overrides → mfdata → `DEFAULT_TER`), `score_fund` |
@@ -151,7 +152,7 @@ How Regular plans are handled:
 
 - Write output files through `_save_output_file` (temp file, then `os.replace`, with fallbacks). This works around Windows file locks and Controlled Folder Access.
 - `save_portfolio_db` has its own fallback chain of paths.
-- Network fetchers must degrade gracefully: print a yellow warning and return `{}` or `[]`. They must never crash the run.
+- Network fetchers must degrade gracefully: print a yellow warning and return `{}` or `[]`. They must never crash the run. The degradation must also be **visible**: record it in `mfa.data.status`, so the terminal table and report banner show it.
 - Put new constants in `mfa/config.py`. Import names explicitly (`from mfa.x import a, b`); there are no star imports.
 - Tests patch module globals where they are *used*, e.g. `monkeypatch.setattr(mfa.holdings.db, "PORTFOLIO_DB_FILE", ...)`.
 - Tests must stay offline: build tiny fake `amfi_master` and `nav_data` fixtures (see `tests/test_core.py`).

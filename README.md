@@ -61,6 +61,11 @@ The tool resolves holdings automatically, whether they come as ISINs, registrar 
 - [mfdata.in](https://mfdata.in): TER, AUM, valuation and ranks. Optional; the tool falls back to NAV-only ranking.
 - yfinance: Nifty 50 and Midcap benchmarks
 
+## Data quality
+Every run prints a **Data status** table: each source's freshness and coverage, and how many of the 7 score components had real data. The HTML report repeats it, with a warning banner when anything is degraded.
+- If under 80% of the fund universe loads, build mode **refuses to recommend** rather than pick from a partial list.
+- A NAV more than 5 business days old is flagged as stale.
+
 ## Privacy
 - Everything stays on your machine. Your PAN is never stored: holdings are keyed by an HMAC-SHA256 of the PAN, using a random per-install secret (`.mf_salt`).
 - The portfolio database, the salt, caches, CAS PDFs and generated reports are all git-ignored.

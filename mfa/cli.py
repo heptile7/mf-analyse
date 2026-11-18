@@ -16,6 +16,7 @@ from rich.table import Table
 from mfa.backtest import load_backtest_summary, print_backtest, run_backtest, save_backtest
 from mfa.tracking import evaluate_recommendations, nav_lookup_from, print_track_record, record_recommendation, track_record_html
 from mfa.config import INDEX_FUND_CODE, INDEX_FUND_NAME, AMFI_CACHE_FILE, AMFI_PORTFOLIO_CACHE_FILE, BENCHMARK_CACHE_FILE, CACHE_FILE, CHART_FILE, ENRICH_CACHE_FILE, HOLDINGS_CACHE_FILE
+from mfa.data import status
 from mfa.data.amfi import fetch_amfi_master, fetch_fund_portfolios
 from mfa.data.enrichment import fetch_fund_enrichment
 from mfa.data.market import YFINANCE_OK, fetch_benchmarks, get_market_context
@@ -349,6 +350,7 @@ def portfolio_check_mode() -> None:
     benchmarks         = fetch_benchmarks() if YFINANCE_OK else {}
     enrichment         = fetch_fund_enrichment(nav_data)
     portfolio_holdings = fetch_fund_portfolios(nav_data, enrichment)
+    status.assess_sources(nav_data, amfi_master, benchmarks, enrichment, portfolio_holdings)
 
     holdings, changed = normalise_stored_holdings(holdings, amfi_master, nav_data)
     if prompt_missing_cost_basis(holdings):
@@ -365,6 +367,7 @@ def portfolio_check_mode() -> None:
             amfi_master=amfi_master, benchmarks=benchmarks, aum_data=enrichment,
         )
         prog.update(t, description="Universe scored.")
+    status.print_status(status.score_completeness(all_scored))
 
     # ── Analyse holdings ─────────────────────────────────────────────────
     console.print("  [dim]Matching holdings against universe...[/dim]")
@@ -562,6 +565,13 @@ def main():
     enrichment         = fetch_fund_enrichment(nav_data)
     portfolio_holdings = fetch_fund_portfolios(nav_data, enrichment)
     market_ctx         = get_market_context(benchmarks)
+    status.assess_sources(nav_data, amfi_master, benchmarks, enrichment, portfolio_holdings)
+    refusal = status.nav_refusal_reason()
+    if refusal:
+        status.print_status()
+        console.print(Panel(f"[bold red]{refusal}[/bold red]", title="Not recommending",
+                            border_style="red"))
+        sys.exit(1)
 
     if market_ctx:
         col = "yellow" if "BULL" in market_ctx else ("red" if "BEAR" in market_ctx else "cyan")
@@ -583,6 +593,8 @@ def main():
     if not portfolio:
         console.print("[bold red]Could not build portfolio. Try deleting mf_nav_cache.json.[/bold red]")
         sys.exit(1)
+    completeness = status.score_completeness(all_scored_universe)
+    status.print_status(completeness)
 
     # ── Existing portfolio analysis (if PAN provided) ───────────────────
     # Reuse the already-scored universe from build_portfolio — no re-computation needed.
@@ -637,7 +649,8 @@ def main():
     print_track_record(track_rows)
     if record_recommendation(portfolio, params["optimise"], index_now):
         console.print("  [dim]Recommendation saved — future runs will show how it did vs the index fund.[/dim]")
-    extra_html = track_record_html(track_rows, load_backtest_summary())
+    extra_html = (track_record_html(track_rows, load_backtest_summary())
+                  + status.status_section_html(completeness))
 
     # ── Step-up SIP analysis ──────────────────────────────────────────────
     stepup_pct = rich_ask_int(
@@ -717,6 +730,7 @@ def main():
                 cohort=cohort,
                 portfolio_holdings=portfolio_holdings,
                 extra_sections_html=extra_html,
+                status_banner_html=status.status_banner_html(completeness),
             )
             console.print(f"  [green]HTML report: {html_path}[/green]")
             break

@@ -217,6 +217,7 @@ def generate_html_report(
     cohort: dict = None,
     portfolio_holdings: dict = None,
     extra_sections_html: str = "",
+    status_banner_html: str = "",
 ) -> str:
     """extra_sections_html: pre-rendered <div class="section"> blocks (track record,
     action plan, data status, ...) inserted before the existing-portfolio section."""
@@ -683,6 +684,7 @@ tr:hover td{{background:#f8fafc}}
   </div>
 </div>
 
+{status_banner_html}
 {"<div style='background:" + mbg + ";color:" + mcol + ";border-radius:10px;padding:14px;margin-bottom:16px;font-size:13px;font-weight:500;'>📊 Market Signal: " + market_context + "</div>" if market_context else ""}
 
 {req_sip_html}
