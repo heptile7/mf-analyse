@@ -181,3 +181,48 @@ def compute_rank_consistency(scored: list) -> None:
             # a fund that only existed during a bull run hasn't been tested.
             f["rank_consistency"] = round(float(np.mean(ranks)) - float(np.std(ranks)), 1) \
                                     if len(ranks) >= 2 else 0.0
+
+
+def xirr(cashflows: list) -> float | None:
+    """
+    Annualised money-weighted return (% p.a.) for [(date, amount)] where money
+    invested is negative and money received / current value is positive.
+    Bisection on the NPV (monotonic in rate for this sign pattern); stdlib only.
+    """
+    flows = [(pd.Timestamp(d), float(a)) for d, a in cashflows if a]
+    if len(flows) < 2 or not any(a < 0 for _, a in flows) or not any(a > 0 for _, a in flows):
+        return None
+    t0 = min(d for d, _ in flows)
+    yrs = [((d - t0).days / 365.25, a) for d, a in flows]
+    if max(y for y, _ in yrs) < 1 / 365:
+        return None
+
+    def npv(rate: float) -> float:
+        return sum(a / (1 + rate) ** y for y, a in yrs)
+
+    lo, hi = -0.9999, 10.0
+    f_lo, f_hi = npv(lo), npv(hi)
+    if f_lo * f_hi > 0:
+        return None
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        f_mid = npv(mid)
+        if abs(f_mid) < 1e-7 or (hi - lo) < 1e-10:
+            break
+        if f_lo * f_mid < 0:
+            hi, f_hi = mid, f_mid
+        else:
+            lo, f_lo = mid, f_mid
+    return round(mid * 100, 2)
+
+
+def holding_cashflows(transactions: list, current_value: float, today=None) -> list:
+    """CAS transactions -> XIRR cashflows (purchases negative, redemptions positive)."""
+    flows = []
+    for t in transactions or []:
+        if t.get("units") is None or not t.get("amount"):
+            continue                  # stamp duty / STT / tax rows
+        flows.append((str(t["date"])[:10], -float(t["amount"])))
+    if current_value:
+        flows.append((pd.Timestamp(today) if today else pd.Timestamp.now().normalize(), float(current_value)))
+    return flows

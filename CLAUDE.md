@@ -115,8 +115,14 @@ How Regular plans are handled:
 - Drops scraped UI junk (`_JUNK_NAMES`).
 - Writes resolved AMFI codes back to the DB. The original code is kept in `rta_code`.
 
+## Returns
+- `xirr()` in `mfa/metrics.py` uses bisection and only the standard library.
+- `holding_cashflows` builds the cashflows: CAS purchases are negative, redemptions positive, and the current value is added as the final inflow. Tax and stamp-duty rows (`units` is None) are skipped.
+- When a holding has `transactions`, show XIRR. Otherwise show the old lump-sum CAGR with a `~` prefix (`return_str`). Never present the approximation as exact.
+
 ## Privacy rules
 
+- Holdings imported from CAS keep their full `transactions` list in `mf_portfolio_db.json`. That's more personal data, so keep it local.
 - **Never print, log or persist a raw PAN.** DB keys come from `pan_key()`: HMAC-SHA256 with a per-install `.mf_salt` (24 hex characters).
 - Legacy unsalted v1 keys are migrated automatically on first use (DB `version` 2).
 - `mf_portfolio_db.json`, any `mf_portfolio_db*.json` backups, `.mf_salt` and CAS PDFs are git-ignored. Do not commit them, and do not send their contents to external services.

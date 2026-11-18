@@ -552,6 +552,14 @@ def _parse_cas_pdf(pdf_path: str) -> list:
                 "current_value": _safe_float(val.get("value")) or 0,
                 "start_date":    txn_dates[0] if txn_dates else "",
                 "notes":         "",
+                # Kept for exact XIRR and FIFO tax lots (local DB only, never committed)
+                "transactions":  [{"date": str(t.get("date", ""))[:10],
+                                   "amount": _safe_float(t.get("amount")),
+                                   "units": _safe_float(t.get("units")),
+                                   "nav": _safe_float(t.get("nav")),
+                                   "type": str(t.get("type", ""))}
+                                  for t in (scheme.get("transactions") or [])
+                                  if isinstance(t, dict) and t.get("date")],
             })
     return [h for h in holdings if h.get("scheme_name")]
 

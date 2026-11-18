@@ -306,7 +306,8 @@ def generate_html_report(
             cr, cs     = h.get("category_rank"), h.get("category_size")
             rank_s     = f"{cr}/{cs}" if cr and cs else "—"
             top_pct    = f"{(cs-cr)/cs*100:.0f}%" if (cr and cs) else "—"
-            cagr_s     = f"{h['holding_cagr']:.1f}%" if h.get("holding_cagr") is not None else "—"
+            cagr_s     = (f"{h['xirr']:.1f}% XIRR" if h.get("xirr") is not None
+                          else (f"~{h['holding_cagr']:.1f}%" if h.get("holding_cagr") is not None else "—"))
             gain_s     = (f"<span style='color:{'#15803d' if (h.get('gain_pct') or 0)>=0 else '#b91c1c'}'>"
                           f"{h['gain_pct']:+.1f}%</span>" if h.get("gain_pct") is not None else "—")
             score_s    = f"{h['score']:.0f}/100" if h.get("score") else "—"

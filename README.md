@@ -49,7 +49,7 @@ The first run downloads NAV histories for about 750 funds. That takes 3–5 minu
 ### Importing your holdings
 In check mode, or after entering a PAN in build mode, you can import holdings in any of these ways:
 - **MFCentral (browser)**: Chromium opens and you log in with the OTP yourself. The tool installs `playwright` the first time you use this.
-- **CAS PDF**: a CAMS or KFintech consolidated account statement. The tool installs `casparser` the first time you use this.
+- **CAS PDF**: a CAMS or KFintech consolidated account statement. The tool installs `casparser` the first time you use this. This is the recommended source: its transaction history gives **exact XIRR**, FIFO tax lots for switch costs, and a units check that flags `MISMATCH` when stored units disagree with the transactions. Without it, returns are shown as approximate (`~`).
 - **CSV**: an export from Kuvera, Groww or Coin.
 - **Manual entry**
 

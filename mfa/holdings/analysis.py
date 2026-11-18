@@ -8,9 +8,9 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 
-from mfa.metrics import cagr
+from mfa.metrics import cagr, holding_cashflows, xirr
 from mfa.portfolio import classify_fund
-from mfa.ui import console, fmt_inr, pct_str
+from mfa.ui import console, fmt_inr
 from mfa.util import _safe_float
 
 
@@ -274,6 +274,15 @@ def analyse_holdings(
             years = None
         holding_cagr = cagr(avg_nav, current_nav, years) if (avg_nav and current_nav and years and years > 0.25) else None
 
+        # Exact money-weighted return from CAS transactions; reconcile units.
+        txns = h.get("transactions") or []
+        holding_xirr = xirr(holding_cashflows(txns, cur_value)) if txns else None
+        units_mismatch = None
+        if txns and units:
+            txn_units = sum(t["units"] for t in txns if t.get("units") is not None)
+            if abs(txn_units - units) > 0.01:
+                units_mismatch = round(units - txn_units, 3)
+
         # Recommendation
         if scored_fund:
             cat       = scored_fund.get("category", amfi_master.get(code, {}).get("sebi_category","other"))
@@ -305,6 +314,9 @@ def analyse_holdings(
             "current_value":  round(cur_value, 0) if cur_value else None,
             "gain_pct":       round(gain_pct, 1) if gain_pct is not None else None,
             "holding_cagr":   round(holding_cagr, 1) if holding_cagr is not None else None,
+            "xirr":           holding_xirr,
+            "return_basis":   "xirr" if holding_xirr is not None else ("approx" if holding_cagr is not None else None),
+            "units_mismatch": units_mismatch,
             "years_held":     round(years, 1) if years else None,
             "category_rank":  cat_rank,
             "category_size":  cat_size,
@@ -317,13 +329,30 @@ def analyse_holdings(
     return results
 
 
+def return_str(h: dict) -> str:
+    """XIRR when transactions exist, else '~CAGR' (lump-sum approximation)."""
+    if h.get("xirr") is not None:
+        return f"{h['xirr']:.1f}%"
+    if h.get("holding_cagr") is not None:
+        return f"~{h['holding_cagr']:.1f}%"
+    return "—"
+
+
+def portfolio_xirr(analysis: list, today=None) -> float | None:
+    flows = []
+    for h in analysis:
+        if h.get("transactions"):
+            flows += holding_cashflows(h["transactions"], h.get("current_value") or 0, today)
+    return xirr(flows) if flows else None
+
+
 def display_holdings_analysis(analysis: list) -> None:
     """Rich terminal display of existing portfolio with hold/sell/buy."""
     console.print(Panel("[bold white]YOUR EXISTING PORTFOLIO ANALYSIS[/bold white]",
                         border_style="blue"))
 
     ht = Table(border_style="dim", show_lines=True, padding=(0, 1))
-    for col in ["Fund", "Cat", "SIP/mo", "Cur Value", "CAGR", "Rank", "Score", "Action"]:
+    for col in ["Fund", "Cat", "SIP/mo", "Cur Value", "Return p.a.", "Rank", "Score", "Action"]:
         ht.add_column(col, style="white")
 
     for h in analysis:
@@ -335,12 +364,22 @@ def display_holdings_analysis(analysis: list) -> None:
             h.get("category","—")[:12],
             fmt_inr(h.get("sip_amount") or 0),
             fmt_inr(h.get("current_value") or 0),
-            pct_str(h.get("holding_cagr")),
+            return_str(h),
             rank_s,
             f"{h['score']:.0f}" if h.get("score") else "—",
             f"[{col}]{h['action']}[/{col}]",
         )
     console.print(ht)
+    px = portfolio_xirr(analysis)
+    if px is not None:
+        console.print(f"  [bold]Portfolio XIRR: {px:+.1f}% p.a.[/bold] [dim](holdings with CAS transactions)[/dim]")
+    if not any(h.get("transactions") for h in analysis):
+        console.print("  [dim]Returns marked ~ are approximate (no transaction history). Import a CAS PDF "
+                      "for exact XIRR and tax lots.[/dim]")
+    for h in analysis:
+        if h.get("units_mismatch"):
+            console.print(f"  [red]MISMATCH[/red] {h['scheme_name'][:40]}: stored units differ from "
+                          f"the transaction history by {h['units_mismatch']:+.3f} — re-import the CAS.")
     console.print()
 
     # Action details
