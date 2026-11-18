@@ -12,7 +12,7 @@ Deps: pip install requests pandas numpy matplotlib yfinance rich openpyxl
 """
 
 # ── stdlib ───────────────────────────────────────────────────────────
-import os, re, sys, json, time, io, base64, math, hashlib, html as html_lib
+import os, re, sys, json, time, io, base64, math, hashlib, hmac, difflib, html as html_lib
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -59,6 +59,7 @@ AMFI_PORTFOLIO_CACHE_FILE = os.path.join(_DIR, "mf_amfi_portfolio_cache.json")
 CHART_FILE           = os.path.join(_DIR, "mf_portfolio_charts.png")
 HTML_REPORT_FILE     = os.path.join(_DIR, "mf_portfolio_report.html")
 PORTFOLIO_DB_FILE    = os.path.join(_DIR, "mf_portfolio_db.json")
+PAN_SALT_FILE        = os.path.join(_DIR, ".mf_salt")
 
 
 def _save_output_file(write_fn, primary_path: str, auto_open: bool = False) -> str:
@@ -430,11 +431,19 @@ def fetch_amfi_master() -> dict:
         console.print(f"  [yellow]AMFI master fetch failed: {e}[/yellow]")
         return {}
 
+    resp.encoding = "utf-8"          # server says ISO-8859-1; content is UTF-8
     master: dict = {}
     current_cat, current_amc = "", "Unknown AMC"
+    # Column positions come from the header line. Current layout (2026):
+    #   Scheme Code;ISIN Growth;ISIN Reinv;Scheme Name;Plan;Option;Net Asset Value;Date
+    # Older layout had no Plan/Option columns (plan was part of the name).
+    cols = {"scheme name": 3, "net asset value": 4, "date": 5}
     for line in resp.text.splitlines():
         line = line.strip()
         if not line: continue
+        if line.startswith("Scheme Code;"):
+            cols = {c.strip().lower(): i for i, c in enumerate(line.split(";"))}
+            continue
         if line.startswith(("Open Ended Schemes","Close Ended Schemes","Interval Fund")):
             m = re.search(r'\((.+?)\)', line)
             if m: current_cat = m.group(1).strip()
@@ -443,9 +452,22 @@ def fetch_amfi_master() -> dict:
             parts = line.split(";")
             if len(parts) >= 4 and parts[0].strip().isdigit():
                 code = parts[0].strip()
-                isin = parts[1].strip() if parts[1].strip() not in ("-","") else None
+                def _isin(v: str):
+                    v = v.strip()
+                    return v if v and v != "-" else None
+                def _col(label: str) -> str:
+                    i = cols.get(label)
+                    return parts[i].strip() if i is not None and i < len(parts) else ""
+                # Full name incl. plan/option so Direct vs Regular, Growth vs IDCW stay distinct
+                full_name = " - ".join(p for p in (_col("scheme name"), _col("plan"),
+                                                    _col("option")) if p)
                 master[code] = {"sebi_category": current_cat,
-                                "amc_name": current_amc, "isin": isin}
+                                "amc_name":   current_amc,
+                                "isin":       _isin(parts[1]),
+                                "isin_reinv": _isin(parts[2]),
+                                "name":       full_name,
+                                "nav":        _safe_float(_col("net asset value")),
+                                "nav_date":   _col("date")}
             continue
         if not line.startswith(("Scheme Code","Open Ended","Close Ended","Interval")):
             current_amc = line
@@ -3067,10 +3089,21 @@ def _parse_mfcentral_captured(captured: list) -> list:
     seen: set = set()
 
     def _add(h: dict):
+        cost = h.pop("_cost", None)
+        if not h.get("avg_nav") and cost and h.get("units"):
+            h["avg_nav"] = round(cost / h["units"], 4)
         key = (h.get("scheme_name", "").lower().strip(), round(h.get("units", 0), 2))
         if key[0] and key not in seen:
             seen.add(key)
             holdings.append(h)
+
+    def _cost_of(rec: dict, val: dict):
+        for src in (rec, val or {}):
+            for k in ("cost", "costValue", "investedValue", "investedAmount",
+                      "invested_value", "purchaseValue", "totalInvestment"):
+                v = _safe_float(src.get(k))
+                if v: return v
+        return None
 
     def _parse_folio_dict(data: dict):
         # Schema A-1: {"folios": [...]}  or  {"data": {"folios": [...]}}
@@ -3095,8 +3128,9 @@ def _parse_mfcentral_captured(captured: list) -> list:
                     "avg_nav":       _safe_float(scheme.get("avg_nav") or scheme.get("average_nav") or scheme.get("avgNav")) or 0,
                     "current_nav":   _safe_float(val.get("nav") or val.get("navValue")) or 0,
                     "current_value": _safe_float(val.get("value") or val.get("currentValue") or val.get("marketValue")) or 0,
-                    "start_date":    str(scheme.get("open") or scheme.get("firstPurchaseDate") or "").split("T")[0],
+                    "start_date":    str(scheme.get("firstPurchaseDate") or "").split("T")[0],
                     "notes":         "",
+                    "_cost":         _cost_of(scheme, val),
                 })
 
         # Schema A-2: direct schemes/holdings list under the dict
@@ -3121,6 +3155,7 @@ def _parse_mfcentral_captured(captured: list) -> list:
                         "current_value": _safe_float(rec.get("value") or rec.get("currentValue") or val.get("value")) or 0,
                         "start_date":    "",
                         "notes":         "",
+                        "_cost":         _cost_of(rec, val),
                     })
 
     def _parse_scheme_list(data: list):
@@ -3142,6 +3177,7 @@ def _parse_mfcentral_captured(captured: list) -> list:
                 "current_value": _safe_float(rec.get("value") or rec.get("currentValue")) or 0,
                 "start_date":    "",
                 "notes":         "",
+                "_cost":         _cost_of(rec, {}),
             })
 
     def _walk_json(obj, depth=0):
@@ -3260,6 +3296,14 @@ def _parse_cas_pdf(pdf_path: str) -> list:
             # casparser uses 'close' for current units, 'open' for start units
             units = (_safe_float(scheme.get("close"))
                      or _safe_float(scheme.get("units")) or 0)
+            # Cost basis: casparser reports total invested cost in valuation.cost
+            cost    = _safe_float(val.get("cost")) or _safe_float(scheme.get("cost"))
+            avg_nav = _safe_float(scheme.get("avg_nav")) or (
+                round(cost / units, 4) if cost and units else 0)
+            # 'open' is the opening unit balance, not a date — use earliest transaction
+            txn_dates = sorted(str(t.get("date", ""))[:10]
+                               for t in (scheme.get("transactions") or [])
+                               if isinstance(t, dict) and t.get("date"))
             holdings.append({
                 "scheme_code":   str(scheme.get("amfi_code") or ""),
                 "scheme_name":   scheme.get("scheme", ""),
@@ -3268,10 +3312,10 @@ def _parse_cas_pdf(pdf_path: str) -> list:
                 "isin":          scheme.get("isin", ""),
                 "sip_amount":    0,
                 "units":         units,
-                "avg_nav":       _safe_float(scheme.get("avg_nav")) or 0,
+                "avg_nav":       avg_nav or 0,
                 "current_nav":   _safe_float(val.get("nav")) or 0,
                 "current_value": _safe_float(val.get("value")) or 0,
-                "start_date":    str(scheme.get("open", "")).split("T")[0],
+                "start_date":    txn_dates[0] if txn_dates else "",
                 "notes":         "",
             })
     return [h for h in holdings if h.get("scheme_name")]
@@ -3371,19 +3415,62 @@ def fetch_portfolio_external(pan: str, amfi_master: dict) -> list:
 
 # ══════════════════════════════════════════════════════════════════════
 
-def hash_pan(pan: str) -> str:
-    """SHA-256 of PAN (first 16 hex chars) — PAN never stored in plaintext."""
+PORTFOLIO_DB_VERSION = 2
+
+
+def _get_salt() -> bytes | None:
+    """Per-install secret for PAN hashing (.mf_salt, git-ignored). None if unwritable."""
+    try:
+        if os.path.exists(PAN_SALT_FILE):
+            with open(PAN_SALT_FILE, "rb") as fh:
+                salt = fh.read()
+            if len(salt) >= 16:
+                return salt
+        salt = os.urandom(32)
+        with open(PAN_SALT_FILE, "wb") as fh:
+            fh.write(salt)
+        return salt
+    except OSError:
+        return None
+
+
+def _legacy_hash_pan(pan: str) -> str:
+    """v1 key: unsalted SHA-256 (brute-forceable — kept only for migration)."""
     return hashlib.sha256(pan.upper().strip().encode()).hexdigest()[:16]
+
+
+def hash_pan(pan: str) -> str:
+    """HMAC-SHA256 of PAN with a per-install salt — PAN never stored in plaintext."""
+    salt = _get_salt()
+    if salt is None:
+        console.print("  [yellow]Could not create .mf_salt — using legacy PAN key.[/yellow]")
+        return _legacy_hash_pan(pan)
+    return hmac.new(salt, pan.upper().strip().encode(), hashlib.sha256).hexdigest()[:24]
+
+
+def pan_key(pan: str) -> str:
+    """Hash the PAN and migrate any v1 (unsalted) DB entry to the new key."""
+    new_key, old_key = hash_pan(pan), _legacy_hash_pan(pan)
+    if new_key == old_key:
+        return new_key
+    db = load_portfolio_db()
+    ports = db.get("portfolios", {})
+    if old_key in ports and new_key not in ports:
+        ports[new_key] = ports.pop(old_key)
+        db["version"] = PORTFOLIO_DB_VERSION
+        save_portfolio_db(db)
+        console.print("  [dim]Portfolio DB key upgraded to salted hash.[/dim]")
+    return new_key
 
 
 def load_portfolio_db() -> dict:
     if not os.path.exists(PORTFOLIO_DB_FILE):
-        return {"version": 1, "portfolios": {}}
+        return {"version": PORTFOLIO_DB_VERSION, "portfolios": {}}
     try:
         with open(PORTFOLIO_DB_FILE, encoding="utf-8") as f:
             return json.load(f)
     except Exception:
-        return {"version": 1, "portfolios": {}}
+        return {"version": PORTFOLIO_DB_VERSION, "portfolios": {}}
 
 
 def save_portfolio_db(db: dict) -> None:
@@ -3638,6 +3725,191 @@ def import_from_csv(filepath: str) -> list:
     return holdings
 
 
+# ══════════════════════════════════════════════════════════════════════
+# HOLDINGS RESOLUTION  (RTA codes / ISINs / names → AMFI code + scored fund)
+# ══════════════════════════════════════════════════════════════════════
+
+_NAME_STOP = {"fund", "plan", "option", "growth", "direct", "regular", "dir", "reg",
+              "gr", "gro", "mf", "the", "retail", "scheme", "g", "opt"}
+_NAME_SUBS = [(r"small\s*-?\s*cap", "small cap"), (r"mid\s*-?\s*cap", "mid cap"),
+              (r"large\s*-?\s*cap", "large cap"), (r"flexi\s*-?\s*cap", "flexi cap"),
+              (r"multi\s*-?\s*cap", "multi cap"), (r"multi\s*-?\s*asset", "multi asset"),
+              (r"plangro\w*", "plan growth")]
+# Tokens that change what a fund *is* — names differing in these never match fuzzily
+_CATEGORY_TOKENS = {"and", "small", "mid", "large", "cap", "flexi", "multi", "value",
+                    "contra", "focused", "elss", "tax", "index", "etf", "debt", "liquid",
+                    "overnight", "duration", "hybrid", "asset", "allocation", "bonus",
+                    "idcw", "dividend", "payout", "reinvestment", "nifty", "sensex",
+                    "technology", "commodities", "retirement"}
+_ISIN_RE = re.compile(r"INF[0-9A-Z]{9}")
+
+
+def _fund_name_key(name: str) -> str:
+    """Normalise a fund name so Direct/Regular/CAS/mfapi spellings compare equal."""
+    s = (name or "").lower().replace("&", " and ")
+    m = re.match(r"^.*?\bmf\s*-\s*(.+)$", s)          # CAS: "NIPPON INDIA MF-NIPPON INDIA ..."
+    if m:
+        s = m.group(1)
+    s = re.sub(r"\([^)]*\)?", " ", s)                  # "(formerly ...)" incl. truncated "(fo"
+    for pat, rep_ in _NAME_SUBS:
+        s = re.sub(pat, rep_, s)
+    return " ".join(t for t in re.findall(r"[a-z0-9]+", s) if t not in _NAME_STOP)
+
+
+def _plan_type(name: str) -> str | None:
+    n = (name or "").lower()
+    if re.search(r"\b(regular|reg)\b", n): return "regular"
+    if re.search(r"\b(direct|dir)\b", n):  return "direct"
+    return None
+
+
+def _same_kind(a: str, b: str) -> bool:
+    ta, tb = set(a.split()), set(b.split())
+    return not ((ta ^ tb) & _CATEGORY_TOKENS)
+
+
+def build_holdings_index(universe: list, nav_data: list, amfi_master: dict) -> dict:
+    """Lookup tables for resolve_holding(). universe = scored fund dicts (may be [])."""
+    idx = {"by_code": {}, "by_key": {}, "by_amc": {}, "isin_to_code": {},
+           "amfi_key": {}, "nav": {}}
+    for f in universe or []:
+        code = str(f.get("scheme_code", ""))
+        idx["by_code"].setdefault(code, f)
+        key = _fund_name_key(f.get("name", ""))
+        if key:
+            idx["by_key"].setdefault(key, f)
+            idx["by_amc"].setdefault(key.split()[0], []).append((key, f))
+    for item in nav_data or []:
+        sch  = item["scheme"]
+        code = str(sch.get("schemeCode", ""))
+        for k in ("isinGrowth", "isinDivReinvestment"):
+            if sch.get(k):
+                idx["isin_to_code"][sch[k].upper()] = code
+        try:
+            idx["nav"][code] = float(item["nav_df"]["nav"].iloc[-1])
+        except Exception:
+            pass
+    for code, v in (amfi_master or {}).items():
+        for k in ("isin", "isin_reinv"):
+            if v.get(k):
+                idx["isin_to_code"].setdefault(v[k].upper(), code)
+        if v.get("name"):
+            idx["amfi_key"].setdefault(
+                (_fund_name_key(v["name"]), _plan_type(v["name"])), code)
+    return idx
+
+
+def _match_by_name(key: str, idx: dict) -> tuple:
+    if not key:
+        return None, None
+    f = idx["by_key"].get(key)
+    if f:
+        return f, "name"
+    cands = [(k, f) for k, f in idx["by_amc"].get(key.split()[0], []) if _same_kind(key, k)]
+    best, best_r = None, 0.0
+    for k, f in cands:
+        r = difflib.SequenceMatcher(None, key, k).ratio()
+        if r > best_r:
+            best, best_r = f, r
+    if best is not None and best_r >= 0.88:
+        return best, "name_fuzzy"
+    toks = set(key.split())
+    subset = {k: f for k, f in cands if toks <= set(k.split()) or set(k.split()) <= toks}
+    if len(subset) == 1:
+        return next(iter(subset.values())), "name_partial"
+    return None, None
+
+
+def resolve_holding(h: dict, idx: dict, amfi_master: dict) -> dict:
+    """
+    Resolve a stored holding to
+      amfi_code — the scheme actually held (for NAV / valuation), may be a Regular plan
+      scored    — the matching fund in the scored (Direct-Growth) universe, or None
+      match     — how `scored` was found: code / isin / name / name_fuzzy / name_partial
+      is_regular— True when the holding is a Regular plan (scored = its Direct sibling)
+    Order: 6-digit AMFI code → ISIN (either ISIN column) → normalised name.
+    Short codes like "51", "MCOG", "EAAG" are CAMS/KFin RTA product codes and are ignored.
+    """
+    raw  = str(h.get("scheme_code") or "").strip()
+    isin = str(h.get("isin") or "").strip().upper()
+    if not isin and _ISIN_RE.fullmatch(raw.upper()):
+        isin = raw.upper()
+    name = h.get("scheme_name", "")
+    key  = _fund_name_key(name)
+    plan = _plan_type(name)
+
+    own = raw if (raw.isdigit() and len(raw) >= 6
+                  and (raw in amfi_master or raw in idx["by_code"] or raw in idx["nav"])) else None
+    if not own and isin:
+        own = idx["isin_to_code"].get(isin)
+    if not own and key:
+        own = idx["amfi_key"].get((key, plan)) or (
+            idx["amfi_key"].get((key, None)) if plan is None else None)
+    if plan is None and own and amfi_master.get(own, {}).get("name"):
+        plan = _plan_type(amfi_master[own]["name"])
+    is_regular = plan == "regular"
+
+    scored, how = None, None
+    if own and own in idx["by_code"]:
+        scored, how = idx["by_code"][own], ("isin" if own != raw else "code")
+    if scored is None:
+        scored, how = _match_by_name(key, idx)
+    return {"amfi_code": own, "scored": scored, "match": how, "is_regular": is_regular}
+
+
+def normalise_stored_holdings(holdings: list, amfi_master: dict, nav_data: list = None) -> tuple:
+    """
+    Clean junk rows and rewrite RTA codes / ISINs to AMFI scheme codes.
+    The original code is preserved in `rta_code`. Returns (holdings, changed).
+    """
+    cleaned = _clean_holdings(holdings)
+    changed = len(cleaned) != len(holdings)
+    idx = build_holdings_index([], nav_data or [], amfi_master)
+    for h in cleaned:
+        res  = resolve_holding(h, idx, amfi_master)
+        code = res["amfi_code"]
+        raw  = str(h.get("scheme_code") or "")
+        if code and code != raw:
+            if _ISIN_RE.fullmatch(raw.upper()) and not h.get("isin"):
+                h["isin"] = raw.upper()
+            elif raw:
+                h.setdefault("rta_code", raw)
+            h["scheme_code"] = code
+            changed = True
+        if code and not h.get("isin") and (amfi_master.get(code) or {}).get("isin"):
+            h["isin"] = amfi_master[code]["isin"]
+            changed = True
+    return cleaned, changed
+
+
+def prompt_missing_cost_basis(holdings: list) -> bool:
+    """Offer to enter invested amounts for holdings with units but no avg NAV."""
+    missing = [h for h in holdings if (h.get("units") or 0) > 0 and not (h.get("avg_nav") or 0)]
+    if not missing:
+        return False
+    ans = Prompt.ask(
+        f"  [green]{len(missing)} holdings have no cost basis (gain/tax-harvest can't be computed). "
+        f"Enter invested amounts now?[/green]", choices=["y", "n"], default="n")
+    if ans != "y":
+        return False
+    changed = False
+    for h in missing:
+        amt = _safe_float(Prompt.ask(
+            f"  Invested ₹ in [cyan]{h.get('scheme_name','')[:50]}[/cyan] "
+            f"({h['units']:.3f} units) — blank to skip", default="").replace(",", ""))
+        if not amt:
+            continue
+        h["avg_nav"] = round(amt / h["units"], 4)
+        if not h.get("start_date"):
+            sd = Prompt.ask("    First investment date YYYY-MM-DD (blank to skip)", default="").strip()
+            try:
+                datetime.fromisoformat(sd); h["start_date"] = sd
+            except ValueError:
+                pass
+        changed = True
+    return changed
+
+
 def _holding_action(category_rank: int, category_size: int,
                     fund_age: float, aum_warn: bool) -> tuple:
     """
@@ -3682,49 +3954,24 @@ def analyse_holdings(
     • Hold / Sell / Buy recommendation
     Returns enriched holding dicts.
     """
-    # Build lookups: by numeric scheme_code, by ISIN (from amfi_master), by name
-    by_code = {str(f["scheme_code"]): f for f in all_scored}
-    by_name = {f["name"].lower(): f for f in all_scored}
-
-    # ISIN → numeric AMFI code (amfi_master is keyed by numeric code; isin is in value)
-    isin_to_code: dict = {v["isin"]: k
-                          for k, v in amfi_master.items() if v.get("isin")}
-
-    # Current NAV lookup (by numeric scheme_code)
-    nav_lookup: dict = {}
-    for item in nav_data:
-        code = str(item["scheme"].get("schemeCode", ""))
-        nav_lookup[code] = float(item["nav_df"]["nav"].iloc[-1])
+    idx = build_holdings_index(all_scored, nav_data, amfi_master)
 
     results = []
     for h in user_holdings:
-        raw_code = str(h.get("scheme_code", ""))
-        isin     = str(h.get("isin", "") or "").upper()
-        name     = h.get("scheme_name", "")
+        name        = h.get("scheme_name", "")
+        res         = resolve_holding(h, idx, amfi_master)
+        scored_fund = res["scored"]
+        own_code    = res["amfi_code"]
+        is_regular  = res["is_regular"]
+        code        = own_code or str(h.get("scheme_code", ""))
 
-        # ISIN may be stored in scheme_code field (MFCentral DOM scrape)
-        looks_isin = raw_code.startswith("INF") or (len(raw_code) > 8 and raw_code[:2].isupper())
-        if looks_isin and not isin:
-            isin = raw_code.upper()
-
-        # Resolve to numeric AMFI scheme_code via amfi_master reverse map
-        code = raw_code
-        if looks_isin or not by_code.get(raw_code):
-            resolved = isin_to_code.get(isin)
-            if resolved:
-                code = resolved
-
-        # 1. Exact numeric scheme_code match
-        scored_fund = by_code.get(code)
-        # 2. Fuzzy name match as fallback
-        if not scored_fund:
-            name_l = name.lower()
-            scored_fund = next(
-                (f for fname, f in by_name.items()
-                 if name_l[:22] in fname or fname[:22] in name_l), None)
-
-        # Current NAV: prefer nav_lookup (live from cache), fall back to stored value
-        current_nav = nav_lookup.get(code) or h.get("current_nav") or 0
+        # Current NAV of the scheme actually held. Never value a Regular holding
+        # at its Direct sibling's NAV — the two NAVs diverge by the TER gap.
+        current_nav = (idx["nav"].get(own_code or "")
+                       or (amfi_master.get(own_code or "") or {}).get("nav")
+                       or (idx["nav"].get(str(scored_fund["scheme_code"]))
+                           if scored_fund and not is_regular else None)
+                       or h.get("current_nav") or 0)
         avg_nav     = h.get("avg_nav") or 0
         units       = h.get("units") or 0
         cur_value   = units * current_nav if units and current_nav else h.get("current_value") or 0
@@ -3748,6 +3995,9 @@ def analyse_holdings(
             score     = scored_fund.get("score", 0)
             alpha     = scored_fund.get("alpha")
             action, col, reason = _holding_action(cat_rank or 1, cat_size or 1, age, aum_warn)
+            if is_regular:
+                reason += (" · Regular plan — ranked via its Direct sibling; Direct typically "
+                           "costs ~0.5–1% p.a. less (route new SIPs there; check exit load/LTCG before switching)")
         else:
             cat = classify_fund(name, code, amfi_master)
             cat_rank = cat_size = score = alpha = None
@@ -3755,6 +4005,10 @@ def analyse_holdings(
 
         results.append({
             **h,
+            "scheme_code":    str(scored_fund["scheme_code"]) if scored_fund else code,
+            "amfi_code":      own_code,
+            "match":          res["match"],
+            "is_regular":     is_regular,
             "scheme_name":    name,
             "category":       cat,
             "current_nav":    round(current_nav, 2) if current_nav else None,
@@ -4168,10 +4422,11 @@ def run_portfolio_manager(
     show_pending_action_plan(pan_hash)
 
     user_port = get_user_portfolio(pan_hash)
-    holdings  = _clean_holdings(user_port.get("holdings", []))
+    holdings, changed = normalise_stored_holdings(
+        user_port.get("holdings", []), amfi_master, nav_data)
 
-    # Persist cleaned version (removes junk scraped from DOM)
-    if len(holdings) != len(user_port.get("holdings", [])):
+    # Persist cleaned + code-resolved version (removes junk scraped from DOM)
+    if changed:
         user_port["holdings"] = holdings
         save_user_portfolio(pan_hash, user_port)
 
@@ -4305,6 +4560,10 @@ def run_portfolio_manager(
     if not holdings:
         console.print("  [dim]No holdings to analyse — add funds via option 0, 2, or 3.[/dim]")
         return []
+
+    if action_idx == 1 and prompt_missing_cost_basis(holdings):
+        user_port["holdings"] = holdings
+        save_user_portfolio(pan_hash, user_port)
 
     console.print(f"  [dim]Matching {len(holdings)} holdings against scored universe...[/dim]")
     analysis = analyse_holdings(holdings, all_scored, nav_data, amfi_master)
@@ -4613,7 +4872,7 @@ def portfolio_check_mode() -> None:
     if not raw_pan:
         console.print("  [red]PAN required for portfolio check.[/red]")
         return
-    pan_hash = hash_pan(raw_pan)
+    pan_hash = pan_key(raw_pan)
 
     user_port = get_user_portfolio(pan_hash)
     holdings  = _clean_holdings(user_port.get("holdings", []))
@@ -4647,6 +4906,13 @@ def portfolio_check_mode() -> None:
     benchmarks         = fetch_benchmarks() if YFINANCE_OK else {}
     enrichment         = fetch_fund_enrichment(nav_data)
     portfolio_holdings = fetch_fund_portfolios(nav_data, enrichment)
+
+    holdings, changed = normalise_stored_holdings(holdings, amfi_master, nav_data)
+    if prompt_missing_cost_basis(holdings):
+        changed = True
+    if changed:
+        user_port["holdings"] = holdings
+        save_user_portfolio(pan_hash, user_port)
 
     # ── Score universe using balanced strategy as neutral reference ───────
     with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console) as prog:
@@ -4796,7 +5062,7 @@ def main():
     raw_pan = Prompt.ask(
         "  [green]Enter PAN for portfolio tracking (or Enter to skip)[/green]",
         default="").strip().upper()
-    pan_hash = hash_pan(raw_pan) if raw_pan else None
+    pan_hash = pan_key(raw_pan) if raw_pan else None
 
     params = run_questionnaire()
 
