@@ -40,7 +40,8 @@ Each layer imports only from the layers to its left. Keep it that way.
 | `mfa/data/enrichment.py` | mfdata.in TER, AUM, PE and category ranks |
 | `mfa/metrics.py` | CAGR, rolling returns, alpha/beta, capture ratios, cohort statistics |
 | `mfa/scoring.py` | TER resolution (overrides → mfdata → `DEFAULT_TER`), `score_fund` |
-| `mfa/portfolio.py` | `build_portfolio` (scoring pipeline, correlation and AMC caps), SIP allocation, Monte Carlo, tax, passive baseline, required SIP, step-up |
+| `mfa/portfolio.py` | `score_universe` (passes 1–5, with no file or network I/O, so it can be reused by the backtest), `build_portfolio` (slot selection, correlation and AMC caps), SIP allocation, Monte Carlo, tax, passive baseline, required SIP, step-up |
+| `mfa/backtest.py` | Walk-forward backtest. It truncates NAV and benchmark data to each cutoff, calls `score_universe` with no enrichment or TER overrides, and judges picks on forward CAGR against a naive rule and the index fund |
 | `mfa/report.py` | `generate_charts`, `generate_html_report` (self-contained, base64 images), `print_portfolio` |
 | `mfa/holdings/fetch.py` | Importers: MFCentral browser capture (Playwright, OTP typed by the user), CAS PDF (casparser), CSV |
 | `mfa/holdings/db.py` | `mf_portfolio_db.json` keyed by `pan_key(pan)`; stored action plans |
@@ -54,10 +55,17 @@ Each layer imports only from the layers to its left. Keep it that way.
 |---|---|---|
 | `mf_nav_cache.json` | mfapi.in | 24h |
 | `mf_amfi_master.json` | AMFI NAVAll.txt | 24h |
-| `mf_benchmark.json` | yfinance | 7d |
+| `mf_benchmark.json` | yfinance, full history (`period="max"`, back to 2007) | 7d |
+| `mf_extra_nav_cache.json` | mfapi.in, single schemes outside the universe (index fund, Regular plans) via `fetch_scheme_nav` | 24h |
 | `mf_enrichment_cache.json` | mfdata.in | 24h |
 | `mf_holdings_cache.json`, `mf_amfi_portfolio_cache.json` | fund portfolio disclosures | |
 
+- **NAV coverage is checked.**
+  - `fetch_and_cache` retries each scheme, then runs a sequential second pass, then reuses previous-cache copies of anything that still failed.
+  - It reports coverage. Below 80%, the cache is written with `partial: true` and `load_cache` refuses it.
+  - Never let failures silently shrink the universe. An earlier version cached 131 of 743 funds.
+- **Index yardstick:** `INDEX_FUND_CODE` (UTI Nifty 50 Index Fund Direct, 120716) is total-return and net of costs. Prefer it to `^NSEI`, which is a price index.
+- An empty enrichment result is **not** cached, so a down mfdata.in is retried on the next run.
 - **`mf_nav_cache.json` is about 270 MB.** Never Read or cat it. Load it with Python (`json.load` takes about 4s).
 - **NAVAll.txt format changed (2026).** It now has 8 columns: `Code;ISIN Growth;ISIN Reinv;Scheme Name;Plan;Option;NAV;Date`. `fetch_amfi_master` maps columns from the header line, so keep it header-driven. The response must be decoded as UTF-8, even though the server says ISO-8859-1.
 - `mf_ter_overrides.json` is user config and is tracked in git. It takes priority for TER scoring.
@@ -65,6 +73,12 @@ Each layer imports only from the layers to its left. Keep it that way.
 
 ## Scoring model
 
+- **Backtest finding (Nov 2026, balanced weights, NAV-only components):**
+  - The top picks beat their category median **41%** of the time at 3 years and 47% at 1 year.
+  - A naive "best trailing 3Y" rule scored 47% and 50%.
+  - The rank IC is about 0.
+  - **The score has not shown predictive edge.** Don't present rankings as predictions. Re-run mode 4 after any scoring change.
+- TER is assigned *before* `compute_cohort_stats`, so the cost component is relative to the category median TER. An earlier version gave every fund the same cost score.
 - Seven category-relative components: `info_ratio`, `capture`, `consistency`, `cost`, `capacity`, `valuation`, `ext_rank`.
 - Per-strategy weights live in `SCORE_WEIGHTS`. Each row sums to 100.
 - The HTML methodology section reads these weights directly, so changing the weights updates the report text automatically.

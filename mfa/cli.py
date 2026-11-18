@@ -13,11 +13,12 @@ from rich.progress import TextColumn
 from rich.prompt import Prompt
 from rich.table import Table
 
-from mfa.config import AMFI_CACHE_FILE, AMFI_PORTFOLIO_CACHE_FILE, BENCHMARK_CACHE_FILE, CACHE_FILE, CHART_FILE, ENRICH_CACHE_FILE, HOLDINGS_CACHE_FILE
+from mfa.backtest import print_backtest, run_backtest, save_backtest
+from mfa.config import INDEX_FUND_CODE, INDEX_FUND_NAME, AMFI_CACHE_FILE, AMFI_PORTFOLIO_CACHE_FILE, BENCHMARK_CACHE_FILE, CACHE_FILE, CHART_FILE, ENRICH_CACHE_FILE, HOLDINGS_CACHE_FILE
 from mfa.data.amfi import fetch_amfi_master, fetch_fund_portfolios
 from mfa.data.enrichment import fetch_fund_enrichment
 from mfa.data.market import YFINANCE_OK, fetch_benchmarks, get_market_context
-from mfa.data.nav import fetch_and_cache, load_cache, restore_nav_data
+from mfa.data.nav import fetch_and_cache, fetch_scheme_nav, load_cache, restore_nav_data
 from mfa.holdings.analysis import _clean_holdings, analyse_holdings, display_holdings_analysis, normalise_stored_holdings, prompt_missing_cost_basis
 from mfa.holdings.db import get_user_portfolio, pan_key, save_action_plan, save_user_portfolio, show_pending_action_plan
 from mfa.holdings.fetch import fetch_portfolio_external, import_from_csv
@@ -420,6 +421,35 @@ def portfolio_check_mode() -> None:
 # MAIN
 # ══════════════════════════════════════════════════════════════════════
 
+def backtest_mode() -> None:
+    """Walk-forward test: score the universe as of past year-ends and check what happened next."""
+    console.print(Panel(
+        "Scores the fund universe as it looked at each past year-end (2015–2023), using only\n"
+        "data available then, and checks whether the top picks beat their category over the\n"
+        "next 1 and 3 years — against a naive 'last 3Y winner' rule and a Nifty 50 index fund.",
+        title="[bold]Backtest[/bold]", border_style="cyan"))
+    strat = ["balanced", "aggressive", "conservative"][rich_ask_choice(
+        "Which strategy weights should be tested?", ["Balanced", "Aggressive", "Conservative"])]
+
+    cache    = load_cache()
+    nav_data = restore_nav_data(cache) if cache else fetch_and_cache()
+    if not nav_data:
+        console.print("[bold red]Could not load NAV data.[/bold red]")
+        return
+    benchmarks = fetch_benchmarks() if YFINANCE_OK else {}
+    index_df   = fetch_scheme_nav(INDEX_FUND_CODE)
+    if index_df is None:
+        console.print(f"  [yellow]{INDEX_FUND_NAME} NAV unavailable — index comparison skipped.[/yellow]")
+
+    result = run_backtest(nav_data, benchmarks, index_df, strat)
+    if not result["rows"]:
+        console.print("[yellow]Not enough history in the cached universe to backtest.[/yellow]")
+        return
+    print_backtest(result)
+    path = save_backtest(result)
+    console.print(f"  [green]Backtest report: {path}[/green]")
+
+
 def main():
     console.print(Panel(
         "[bold cyan]MF Portfolio Analyser[/bold cyan]\n"
@@ -434,11 +464,16 @@ def main():
             "Build a new portfolio recommendation",
             "Check my existing portfolio  (HOLD / SELL / BUY + tax harvest)",
             "Refresh data cache  (re-fetch NAV, AMFI, benchmarks)",
+            "Backtest the scoring model  (did past top picks actually win?)",
         ],
     )
 
     if mode == 1:
         portfolio_check_mode()
+        return
+
+    if mode == 3:
+        backtest_mode()
         return
 
     if mode == 2:

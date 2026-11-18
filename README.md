@@ -24,6 +24,11 @@ A terminal tool for Indian mutual fund investors. It builds a SIP portfolio from
 
 **3. Refresh the data caches**
 
+**4. Backtest the scoring model**
+- Scores the universe as it looked at each year-end from 2015 to 2023, using only data available at the time.
+- Checks whether the top picks beat their category over the next 1 and 3 years. The comparisons are a naive "last 3 years' winner" rule and a real Nifty 50 index fund.
+- Writes `mf_backtest_report.html` with a plain-words verdict. Read it before trusting the rankings.
+
 ## Quick start
 
 ```bash
