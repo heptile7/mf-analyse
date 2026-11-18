@@ -104,6 +104,25 @@ How Regular plans are handled:
 - `mf_portfolio_db.json`, any `mf_portfolio_db*.json` backups, `.mf_salt` and CAS PDFs are git-ignored. Do not commit them, and do not send their contents to external services.
 - Deleting `.mf_salt` orphans the stored portfolios. Treat it as a key.
 
+## Automation (`.claude/`)
+
+- **`hooks/cleanup.py`**: a `PostToolUse` hook on `Bash` and `PowerShell`.
+  - Deletes `*.tmp` files older than 10 minutes. Younger ones may belong to a write that is still running.
+  - Deletes `__pycache__/` and `.pytest_cache/`. It never touches anything under `.venv/`.
+  - Deletes the HTML report and PNG once they are older than 7 days.
+  - Only *warns*, once per session, about DB fallback copies (`mf_portfolio_db_HHMMSS.json`). Never delete those automatically; they may hold the newest holdings.
+- **`hooks/end_of_turn.py`**: a `Stop` hook that runs at most one check per stop:
+  1. If code changed but `README.md` and `CLAUDE.md` didn't, update the docs or say in one line that no update is needed.
+  2. Otherwise, if there are uncommitted changes, invoke the `commit-push` skill.
+
+  Each check fires at most once per working-tree state. Loop-guard state lives in `%TEMP%/claude-mfa-hooks-<session>.json`. The hook is skipped in plan mode.
+- **`skills/commit-push/`**: commits and pushes to the **public** `heptile7/mf-analyse` repo automatically. It is gated by:
+  - `pytest`
+  - `pyflakes`
+  - `scripts/guard.py`, which blocks personal-data files, files over 2 MB, PAN-like strings and email addresses in staged changes
+
+  It never force-pushes and never bypasses the guard.
+
 ## Conventions
 
 - Write output files through `_save_output_file` (temp file, then `os.replace`, with fallbacks). This works around Windows file locks and Controlled Folder Access.
