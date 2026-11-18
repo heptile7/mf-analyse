@@ -4735,7 +4735,7 @@ def main():
         return
 
     if mode == 2:
-        import tempfile as _tf, json as _json
+        import tempfile as _tf
         console.print("[cyan]Clearing caches...[/cyan]")
         cleared, failed = [], []
         for fpath in [CACHE_FILE, AMFI_CACHE_FILE, BENCHMARK_CACHE_FILE,
@@ -4756,7 +4756,7 @@ def main():
                 tmp_fd, tmp_path = _tf.mkstemp(
                     dir=_tf.gettempdir(), suffix=".json")
                 with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
-                    _json.dump({"timestamp": 0, "data": {}}, fh)
+                    json.dump({"timestamp": 0, "data": {}}, fh)
                 os.replace(tmp_path, fpath)
                 cleared.append(os.path.basename(fpath) + " (expired)")
                 continue
@@ -4894,11 +4894,6 @@ def main():
             portfolio, params["monthly_sip"], params["timeline_years"], stepup_pct)
         print_stepup_analysis(stepup)
 
-    # ── Tax harvest (if existing holdings loaded) ─────────────────────────
-    if holdings_analysis:
-        harvest = compute_tax_harvest_plan(holdings_analysis, nav_data)
-        print_tax_harvest(harvest)
-
     # Terminal: show top-3 runners-up per category so user sees why HDFC/ICICI weren't picked
     leaders = (cohort or {}).get("_category_leaders", {})
     selected_codes = {f["scheme_code"] for f in portfolio}
@@ -4952,7 +4947,7 @@ def main():
         except Exception as e:
             if _attempt < 2:
                 console.print(f"  [yellow]Chart attempt {_attempt+1} failed ({e}) — retrying...[/yellow]")
-                import time as _t; _t.sleep(1)
+                time.sleep(1)
             else:
                 console.print(f"  [yellow]Chart failed after 3 attempts: {e}[/yellow]")
 
@@ -4974,7 +4969,7 @@ def main():
         except Exception as e:
             if _attempt < 2:
                 console.print(f"  [yellow]Report attempt {_attempt+1} failed ({e}) — retrying...[/yellow]")
-                import time as _t; _t.sleep(1)
+                time.sleep(1)
             else:
                 console.print(f"  [yellow]HTML report failed after 3 attempts: {e}[/yellow]")
                 html_path = None
