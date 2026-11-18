@@ -182,3 +182,36 @@ def test_pan_hash_depends_on_salt(tmp_path, monkeypatch):
     a = DB.hash_pan("ABCDE1234F")
     monkeypatch.setattr(DB, "PAN_SALT_FILE", str(tmp_path / "b"))
     assert DB.hash_pan("ABCDE1234F") != a
+
+
+# ── scoring pipeline ─────────────────────────────────────────────────
+def _synthetic_nav_item(code, name, sebi, monthly_ret, years=6, start="2015-01-01"):
+    import numpy as np
+    dates = pd.bdate_range(start, periods=int(252 * years))
+    daily = (1 + monthly_ret / 100) ** (1 / 21) - 1
+    rng = np.random.default_rng(int(code))
+    nav = 10 * np.cumprod(1 + daily + rng.normal(0, 0.002, len(dates)))
+    return {"scheme": {"schemeCode": code, "schemeName": name, "_sebi_cat": sebi},
+            "nav_df": pd.DataFrame({"date": dates, "nav": nav})}
+
+
+def test_cost_component_differentiates_by_ter():
+    sebi = "Equity Scheme - Large Cap Fund"
+    nav = [_synthetic_nav_item(100001, "Cheap Large Cap Fund - Direct Plan - Growth", sebi, 1.0),
+           _synthetic_nav_item(100002, "Pricey Large Cap Fund - Direct Plan - Growth", sebi, 1.0),
+           _synthetic_nav_item(100003, "Middle Large Cap Fund - Direct Plan - Growth", sebi, 1.0)]
+    scored, cohort = portfolio.score_universe(
+        nav, "balanced", False, ter_overrides={"100001": 0.3, "100002": 1.5, "100003": 0.8},
+        verbose=False)
+    cost = {f["scheme_code"]: f["score_breakdown"]["cost"] for f in scored}
+    assert cohort["large cap"]["median_ter"] == pytest.approx(0.8)
+    assert cost[100001] > cost[100003] > cost[100002]
+
+
+def test_score_universe_ranks_within_category():
+    sebi = "Equity Scheme - Mid Cap Fund"
+    nav = [_synthetic_nav_item(200000 + i, f"Fund{i} Mid Cap Fund - Direct Plan - Growth", sebi, 0.5 + i * 0.4)
+           for i in range(4)]
+    scored, _ = portfolio.score_universe(nav, "balanced", False, verbose=False)
+    assert [f["category_rank"] for f in scored] == [1, 2, 3, 4]
+    assert all(f["category_size"] == 4 for f in scored)

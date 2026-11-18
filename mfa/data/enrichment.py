@@ -143,9 +143,10 @@ def fetch_fund_enrichment(nav_data: list = None) -> dict:
     if not data:
         console.print("  [yellow]No enrichment data available; using NAV-only ranking.[/yellow]")
 
-    try:
-        _p = json.dumps({"timestamp": time.time(), "data": data}).encode()
-        _save_output_file(lambda fh: fh.write(_p), ENRICH_CACHE_FILE)
-    except Exception:
-        pass
+    if data:          # an empty result (source down) must not block retries for 24h
+        try:
+            _p = json.dumps({"timestamp": time.time(), "data": data}).encode()
+            _save_output_file(lambda fh: fh.write(_p), ENRICH_CACHE_FILE)
+        except Exception:
+            pass
     return data

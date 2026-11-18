@@ -23,6 +23,14 @@ CHART_FILE           = os.path.join(_DIR, "mf_portfolio_charts.png")
 HTML_REPORT_FILE     = os.path.join(_DIR, "mf_portfolio_report.html")
 PORTFOLIO_DB_FILE    = os.path.join(_DIR, "mf_portfolio_db.json")
 PAN_SALT_FILE        = os.path.join(_DIR, ".mf_salt")
+EXTRA_NAV_CACHE_FILE = os.path.join(_DIR, "mf_extra_nav_cache.json")
+BACKTEST_HTML_FILE   = os.path.join(_DIR, "mf_backtest_report.html")
+BACKTEST_SUMMARY_FILE = os.path.join(_DIR, "mf_backtest_summary.json")
+
+# Passive yardstick: a real index fund (total return, net of its own costs) beats
+# comparing against the ^NSEI price index, which ignores dividends.
+INDEX_FUND_CODE = "120716"
+INDEX_FUND_NAME = "UTI Nifty 50 Index Fund - Direct Growth"
 
 
 CACHE_MAX_AGE_HRS       = 24

@@ -21,13 +21,13 @@ except ImportError:
 
 
 def _fetch_ticker(ticker: str, cache: dict) -> pd.Series | None:
-    """Fetch one yfinance ticker (10Y monthly), using in-memory cache dict."""
+    """Fetch one yfinance ticker (full monthly history), using in-memory cache dict."""
     if ticker in cache:
         return cache[ticker]
     if not YFINANCE_OK:
         return None
     try:
-        raw = yf.download(ticker, period="10y", interval="1mo",
+        raw = yf.download(ticker, period="max", interval="1mo",
                           progress=False, multi_level_index=False)
         if raw.empty or len(raw) < 24:
             return None
@@ -49,10 +49,11 @@ def fetch_benchmarks() -> dict:
         try:
             with open(BENCHMARK_CACHE_FILE) as f: cached = json.load(f)
             age_days = (time.time() - cached.get("timestamp", 0)) / 86400
-            if age_days < BENCH_CACHE_MAX_AGE_DAYS:
+            # Older caches only held 10Y — the backtest needs full history
+            if age_days < BENCH_CACHE_MAX_AGE_DAYS and cached.get("period") == "max":
                 result = {}
                 for k, pairs in cached.items():
-                    if k == "timestamp": continue
+                    if k in ("timestamp", "period"): continue
                     result[k] = pd.Series(
                         {pd.Timestamp(d): v for d, v in pairs}, dtype=float)
                 n = len(result)
@@ -79,7 +80,7 @@ def fetch_benchmarks() -> dict:
                   else "  [yellow]Benchmark fetch failed.[/yellow]")
 
     # Save cache
-    serialisable = {"timestamp": time.time()}
+    serialisable = {"timestamp": time.time(), "period": "max"}
     for k, s in result.items():
         serialisable[k] = [[str(d.date()), float(v)] for d, v in s.items()]
     _p = json.dumps(serialisable).encode()

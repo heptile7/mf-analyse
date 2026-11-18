@@ -201,17 +201,21 @@ def estimate_rate(fund: dict, optimise: str, cohort: dict) -> float:
     # Apply survivorship-bias haircut
     return round(blended * haircut / 100 - SURVIVORSHIP_HAIRCUT_EXTRA, 4)
 
-def build_portfolio(
-    nav_data: list, optimise: str, include_debt: bool, num_funds: int,
-    monthly_sip: int, timeline_years: float,
-    amfi_master: dict = None, benchmarks: dict = None, aum_data: dict = None,
+def score_universe(
+    nav_data: list, optimise: str, include_debt: bool,
+    amfi_master: dict = None, benchmarks: dict = None, enrichment: dict = None,
+    ter_overrides: dict = None, verbose: bool = True,
 ) -> tuple:
-    """8-pass pipeline. Returns (portfolio, cohort)."""
+    """
+    Passes 1–5 of the pipeline: metrics, dedup, alpha/beta, TER, cohort stats,
+    rank consistency, score, per-category rank. Pure (no file or network I/O):
+    ter_overrides=None means no overrides (the backtest relies on this to avoid
+    look-ahead). Returns (scored, cohort) with scored sorted by score desc.
+    """
     amfi_master = amfi_master or {}
     benchmarks  = benchmarks  or {}
-    enrichment  = aum_data    or {}
-    overrides   = sync_ter_overrides_from_enrichment(enrichment, load_ter_overrides())
-    months      = int(timeline_years * 12)
+    enrichment  = enrichment  or {}
+    overrides   = ter_overrides or {}
 
     # PASS 1: metrics + classify
     scored = []
@@ -281,8 +285,13 @@ def build_portfolio(
         else:
             f["category_benchmark"] = "N/A"
 
-    if n_alpha:
+    if n_alpha and verbose:
         console.print(f"  [green]Alpha/beta computed for {n_alpha}/{len(scored)} funds.[/green]")
+
+    # TER must be known before cohort stats, or median_ter is always None and
+    # the cost component collapses to a constant for every fund.
+    for f in scored:
+        f["ter"] = get_ter(f["scheme_code"], f["category"], overrides, amfi_master, enrichment)
 
     # PASS 3: cohort stats
     cohort = compute_cohort_stats(scored)
@@ -292,8 +301,7 @@ def build_portfolio(
 
     # PASS 5: score + AMC soft penalty
     for f in scored:
-        ter = get_ter(f["scheme_code"], f["category"], overrides, amfi_master, enrichment)
-        f["ter"] = ter
+        ter = f["ter"]
         res = score_fund(f, optimise, cohort, ter)
         f["score"] = res["score"]; f["score_breakdown"] = res["breakdown"]
         mark_aum_capacity(f)
@@ -309,6 +317,20 @@ def build_portfolio(
     _cat_sizes = {cat: count for cat, count in _cat_rank.items()}
     for f in scored:
         f["category_size"] = _cat_sizes[f["category"]]
+    return scored, cohort
+
+
+def build_portfolio(
+    nav_data: list, optimise: str, include_debt: bool, num_funds: int,
+    monthly_sip: int, timeline_years: float,
+    amfi_master: dict = None, benchmarks: dict = None, aum_data: dict = None,
+) -> tuple:
+    """8-pass pipeline. Returns (portfolio, cohort, scored_universe)."""
+    enrichment = aum_data or {}
+    overrides  = sync_ter_overrides_from_enrichment(enrichment, load_ter_overrides())
+    months     = int(timeline_years * 12)
+    scored, cohort = score_universe(nav_data, optimise, include_debt, amfi_master,
+                                    benchmarks, enrichment, overrides)
     assert num_funds <= len(CATEGORY_SLOTS[optimise])
 
     slots   = CATEGORY_SLOTS[optimise][:num_funds]

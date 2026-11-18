@@ -12,6 +12,7 @@ mf_benchmark.json
 mf_enrichment_cache.json
 mf_holdings_cache.json
 mf_amfi_portfolio_cache.json
+mf_extra_nav_cache.json
 *.tmp
 
 # personal data — never commit
@@ -23,6 +24,14 @@ mf_portfolio_db*.json
 # generated outputs
 mf_portfolio_report.html
 mf_portfolio_charts.png
+mf_backtest_report.html
+mf_backtest_summary.json
+mf_holdings_report.html
+mf_checkin_*.html
+
+# personal history (local only)
+mf_recommendations.json
+mf_checkin_state.json
 
 # local Claude settings
 .claude/settings.local.json
