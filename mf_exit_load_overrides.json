@@ -1,0 +1,3 @@
+{
+  "_help": "Per-scheme exit loads: \"<AMFI scheme code>\": [percent, days]. Example: \"118632\": [1.0, 365] means 1% if redeemed within 365 days. Funds not listed use DEFAULT_EXIT_LOAD in mfa/config.py (equity 1%/1 year, debt and ELSS 0)."
+}

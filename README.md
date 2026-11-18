@@ -22,6 +22,11 @@ A terminal tool for Indian mutual fund investors. It builds a SIP portfolio from
 - Rates each holding **BUY MORE / HOLD / WATCH / SWITCH / EXIT** by its rank within its category.
 - Regular-plan holdings are ranked through their Direct counterpart, with a note on the cost difference.
 - Builds an action plan (switches, gap fills, top-ups). Plans are kept as a history, and pending switches show how the kept fund and the suggested fund have done since the plan was made.
+- **Shows the real cost of every switch:**
+  - Exit load on units held under a year, STCG (20%) and LTCG (12.5%) tax.
+  - This year's ₹1.25 L LTCG exemption is shared across all switches and the harvest plan.
+  - For Regular-plan holdings, the *measured* yearly cost gap against Direct and a breakeven in months, with advice to switch now or move new SIPs first.
+  - Exit loads default to 1% within 1 year for equity funds. Set exact values in `mf_exit_load_overrides.json`.
 - Builds an **LTCG tax-harvest plan** that uses the yearly ₹1.25 L exemption.
 
 **3. Refresh the data caches**

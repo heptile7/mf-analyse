@@ -396,7 +396,7 @@ def portfolio_check_mode() -> None:
     console.print("  [dim]Action plan saved — pending items will show on next run.[/dim]")
 
     # ── Tax harvest plan ─────────────────────────────────────────────────
-    harvest = compute_tax_harvest_plan(analysis, nav_data)
+    harvest = compute_tax_harvest_plan(analysis, nav_data, action_plan.get("exemption_remaining"))
     print_tax_harvest(harvest)
 
     # ── Option to update holdings ─────────────────────────────────────────
@@ -604,7 +604,8 @@ def main():
         print_action_plan(action_plan)
         save_action_plan(pan_hash, action_plan)
         console.print("  [dim]Action plan saved — pending items will show on next run.[/dim]")
-        harvest = compute_tax_harvest_plan(holdings_analysis, nav_data)
+        harvest = compute_tax_harvest_plan(holdings_analysis, nav_data,
+                                           action_plan.get("exemption_remaining"))
         print_tax_harvest(harvest)
 
     # Tax, passive, advantage

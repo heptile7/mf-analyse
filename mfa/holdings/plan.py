@@ -3,6 +3,10 @@
 from rich.panel import Panel
 from rich.table import Table
 
+from mfa.holdings.costs import (ExemptionBudget, breakeven_months, direct_switch_advice,
+                                load_exit_load_overrides, measured_cost_gap_pa,
+                                required_outperformance_pa, switch_cost)
+from mfa.data.nav import fetch_scheme_nav
 from mfa.portfolio import ALLOCATION_WEIGHTS
 from mfa.ui import console, fmt_inr
 
@@ -63,6 +67,51 @@ def find_replacement_fund(category: str, all_scored: list,
     diff_amc = [f for f in candidates
                 if (f.get("amc_name","").split()[0].upper() not in held_amcs)]
     return (diff_amc or candidates or [None])[0]
+
+
+def _direct_switch_item(h: dict, nav_data: list, budget: ExemptionBudget, overrides: dict) -> dict | None:
+    """Regular → Direct: measured annual cost gap, upfront cost, breakeven."""
+    direct_code = str(h.get("scheme_code", ""))
+    direct_df = next((i["nav_df"] for i in nav_data or []
+                      if str(i["scheme"].get("schemeCode")) == direct_code), None)
+    regular_df = fetch_scheme_nav(h.get("amfi_code")) if h.get("amfi_code") else None
+    gap = measured_cost_gap_pa(regular_df, direct_df)
+    cost = switch_cost(h, h["current_nav"], budget, overrides)
+    be = breakeven_months(cost["upfront_rs"], cost["value_rs"], gap)
+    return {
+        "holding":          h,
+        "direct_code":      direct_code,
+        "direct_nav":       float(direct_df["nav"].iloc[-1]) if direct_df is not None else None,
+        "gap_pa":           gap,
+        "annual_extra_rs":  round(cost["value_rs"] * gap / 100) if gap else None,
+        "cost":             cost,
+        "breakeven_months": be,
+        "advice":           ("ELSS units are in their 3-year lock-in — move new SIPs to Direct; "
+                             "switch units as they unlock." if cost["locked_value_rs"]
+                             else direct_switch_advice(be, cost["value_in_exit_load_rs"])),
+    }
+
+
+def _cost_lines(cost: dict | None) -> str:
+    if not cost:
+        return "Cost: unknown (no units / NAV on record)"
+    bits = []
+    if cost["exit_load_rs"]:
+        bits.append(f"exit load {fmt_inr(cost['exit_load_rs'])} on {fmt_inr(cost['value_in_exit_load_rs'])} held < 1Y")
+    if cost["stcg_tax_rs"]:
+        bits.append(f"STCG tax {fmt_inr(cost['stcg_tax_rs'])}")
+    if cost["ltcg_tax_rs"]:
+        bits.append(f"LTCG tax {fmt_inr(cost['ltcg_tax_rs'])}")
+    if cost["exemption_used_rs"]:
+        bits.append(f"uses {fmt_inr(cost['exemption_used_rs'])} of this year's ₹1.25L exemption")
+    head = f"Upfront cost {fmt_inr(cost['upfront_rs'])}" if cost["upfront_rs"] else "Upfront cost ₹0"
+    if not cost["cost_basis_known"]:
+        head += " (tax unknown — no cost basis; import a CAS for exact figures)"
+    elif cost["approx"]:
+        head += " (approx — single lot from start date)"
+    if cost.get("locked_value_rs"):
+        bits.append(f"{fmt_inr(cost['locked_value_rs'])} still in ELSS lock-in — cannot redeem yet")
+    return head + (": " + "; ".join(bits) if bits else "")
 
 
 def generate_action_plan(
@@ -135,7 +184,13 @@ def generate_action_plan(
                            if str(h.get("scheme_code","")) in new_codes]
 
     # ── Build action groups ───────────────────────────────────────────────
-    switches, gap_fills, buy_mores, holds = [], [], [], []
+    switches, gap_fills, buy_mores, holds, direct_switches = [], [], [], [], []
+    # One LTCG exemption per financial year, shared by every switch and the
+    # harvest plan. Exits are costed first (they're the most urgent).
+    budget    = ExemptionBudget()
+    overrides = load_exit_load_overrides()
+    holdings_analysis = sorted(holdings_analysis,
+                               key=lambda h: {"EXIT": 0, "SWITCH": 1}.get(h.get("action"), 2))
 
     for h in holdings_analysis:
         action = h.get("action","HOLD")
@@ -148,21 +203,26 @@ def generate_action_plan(
 
         if action in ("SWITCH", "EXIT"):
             replacement = find_replacement_fund(cat, all_scored, held_codes, held_amcs)
-            exit_load   = yr < 1.0        # most equity funds: 1% if < 1Y
-            ltcg_rs     = 0
-            if avg_n and cur_n and units and cur_n > avg_n:
-                ltcg_rs = round(units * (cur_n - avg_n))
-            tax_rs = round(max(0, ltcg_rs - LTCG_EXEMPTION_PER_YEAR) * 0.125)
+            cost = switch_cost(h, cur_n, budget, overrides) if (cur_n and units) else None
             switches.append({
-                "from":          h,
-                "to":            replacement,
-                "exit_load_warn": exit_load,
-                "ltcg_rs":       ltcg_rs,
-                "tax_rs":        tax_rs,
-                "priority":      1 if action == "EXIT" else 2,
+                "from":           h,
+                "to":             replacement,
+                "cost":           cost,
+                "exit_load_warn": bool(cost and (cost["exit_load_rs"] or cost["age_unknown"])) or (not cost and yr < 1.0),
+                "ltcg_rs":        (cost or {}).get("ltcg_rs", 0),
+                "tax_rs":         (cost or {}).get("tax_rs", 0),
+                "required_outperf_pa": required_outperformance_pa(cost["upfront_rs"], cost["value_rs"]) if cost else None,
+                "ter_from":       h.get("ter"),
+                "ter_to":         (replacement or {}).get("ter"),
+                "priority":       1 if action == "EXIT" else 2,
             })
+            continue
 
-        elif action == "BUY MORE":
+        # Independent of the rating: any Regular-plan holding gets a Direct check.
+        if h.get("is_regular") and cur_n and units:
+            direct_switches.append(_direct_switch_item(h, nav_data, budget, overrides))
+
+        if action == "BUY MORE":
             slot      = _holding_slot(cat, strategy)
             gap_info  = gaps.get(slot, {})
             extra_sip = gap_info.get("sip_gap", 0)
@@ -195,6 +255,8 @@ def generate_action_plan(
 
     return {
         "switches":            sorted(switches, key=lambda x: x["priority"]),
+        "direct_switches":     [d for d in direct_switches if d],
+        "exemption_remaining": round(budget.remaining),
         "gap_fills":           gap_fills,
         "buy_mores":           buy_mores,
         "holds":               holds,
@@ -242,21 +304,38 @@ def print_action_plan(plan: dict) -> None:
         rep = sw["to"]
         urgency = "EXIT NOW" if h.get("action") == "EXIT" else "SWITCH"
         from_str = (f"{h.get('scheme_name','?')[:40]}  "
-                    f"[rank {h.get('category_rank','?')}/{h.get('category_size','?')}  "
-                    f"score {h.get('score') or '?'}]")
+                    f"(rank {h.get('category_rank','?')}/{h.get('category_size','?')}  "
+                    f"score {h.get('score') or '?'})")
         if rep:
             to_str = (f"{rep.get('name','?')[:40]}  "
-                      f"[rank {rep.get('category_rank','?')}/{rep.get('category_size','?')}  "
-                      f"score {rep.get('score') or '?'}]")
+                      f"(rank {rep.get('category_rank','?')}/{rep.get('category_size','?')}  "
+                      f"score {rep.get('score') or '?'})")
         else:
             to_str = "No direct replacement found in universe — consider category alternatives"
-        el_warn = "⚠ Exit load likely (held < 1Y)  " if sw["exit_load_warn"] else ""
-        tax_str = (f"Tax on gain: {fmt_inr(sw['tax_rs'])}  "
-                   f"(LTCG: {fmt_inr(sw['ltcg_rs'])})"
-                   if sw["ltcg_rs"] else "No tax impact (cost basis unavailable or no gain)")
+        cost_str = _cost_lines(sw.get("cost"))
+        extra = []
+        if sw.get("required_outperf_pa") is not None and sw["cost"]["upfront_rs"]:
+            extra.append(f"Pays back only if the new fund beats the old by "
+                         f"{sw['required_outperf_pa']:.2f}% a year for 3 years")
+        if sw.get("ter_from") is not None and sw.get("ter_to") is not None:
+            extra.append(f"TER {sw['ter_from']:.2f}% → {sw['ter_to']:.2f}%")
         _step(urgency, "red" if urgency == "EXIT NOW" else "yellow",
               f"{h.get('scheme_name','?')[:34]} → {(rep or {}).get('name','?')[:30]}",
-              f"FROM: {from_str}\n  TO:   {to_str}\n  {el_warn}{tax_str}")
+              f"FROM: {from_str}\n  TO:   {to_str}\n  {cost_str}"
+              + ("\n  " + " · ".join(extra) if extra else ""))
+
+    # ── REGULAR → DIRECT ─────────────────────────────────────────────────
+    for ds in plan.get("direct_switches", []):
+        h = ds["holding"]
+        gap = (f"Measured cost of the Regular plan: {ds['gap_pa']:.2f}% a year"
+               + (f" ≈ {fmt_inr(ds['annual_extra_rs'])}/yr on {fmt_inr(ds['cost']['value_rs'])}"
+                  if ds.get("annual_extra_rs") else "")) if ds.get("gap_pa") else \
+              "Cost gap could not be measured (Regular NAV history unavailable)"
+        be = (f"Breakeven: {ds['breakeven_months']:.0f} months" if ds.get("breakeven_months") is not None
+              else "Breakeven: n/a")
+        _step("DIRECT PLAN", "magenta",
+              f"{h.get('scheme_name','?')[:40]} — Regular plan",
+              f"{ds['advice']}\n  {gap}\n  {_cost_lines(ds['cost'])}\n  {be}")
 
     # ── GAP FILLS (new category coverage) ────────────────────────────────
     for gf in plan["gap_fills"]:
@@ -275,7 +354,7 @@ def print_action_plan(plan: dict) -> None:
         _step("INCREASE", "green",
               f"{h.get('scheme_name','?')[:34]} — add {fmt_inr(bm['extra_sip'])}/month",
               f"Top performer in {h.get('category','?')} "
-              f"[rank {h.get('category_rank','?')}/{h.get('category_size','?')}]\n"
+              f"(rank {h.get('category_rank','?')}/{h.get('category_size','?')})\n"
               f"Slot '{bm['slot']}' is {bm['gap_pct']:.1f}% below target — "
               f"increase existing SIP rather than opening a new fund")
 
@@ -333,19 +412,22 @@ def print_action_plan(plan: dict) -> None:
 
 LTCG_EXEMPTION_PER_YEAR = 125_000   # ₹1.25L per FY (as of FY2025-26)
 
-def compute_tax_harvest_plan(holdings_analysis: list, nav_data: list) -> list:
+def compute_tax_harvest_plan(holdings_analysis: list, nav_data: list,
+                             exemption_available: float | None = None) -> dict:
     """
     For each holding with unrealised LTCG, compute how many units to redeem
-    annually to fully utilise the ₹1.25L LTCG exemption and immediately reinvest.
-    Returns list of action dicts with redemption details.
+    to use the LTCG exemption and immediately reinvest.
+    exemption_available: what's left after switches in this year's action plan
+    (the exemption is shared); defaults to the full ₹1.25L.
     """
+    available = float(LTCG_EXEMPTION_PER_YEAR if exemption_available is None else exemption_available)
     nav_lookup: dict = {}
     for item in nav_data:
         code = str(item["scheme"].get("schemeCode", ""))
         nav_lookup[code] = float(item["nav_df"]["nav"].iloc[-1])
 
     harvest_actions = []
-    remaining_exemption = float(LTCG_EXEMPTION_PER_YEAR)
+    remaining_exemption = available
 
     # Only HOLD funds with long-term gains qualify (held > 1Y, positive gain)
     eligible = [
@@ -387,9 +469,10 @@ def compute_tax_harvest_plan(holdings_analysis: list, nav_data: list) -> list:
 
     total_tax_saved = sum(a["tax_saved"] for a in harvest_actions)
     return {"actions": harvest_actions,
-            "total_ltcg_realised": round(LTCG_EXEMPTION_PER_YEAR - remaining_exemption),
+            "total_ltcg_realised": round(available - remaining_exemption),
             "total_tax_saved":     round(total_tax_saved),
-            "exemption_used":      round(LTCG_EXEMPTION_PER_YEAR - remaining_exemption),
+            "exemption_available": round(available),
+            "exemption_used":      round(available - remaining_exemption),
             "exemption_remaining": round(max(0, remaining_exemption))}
 
 

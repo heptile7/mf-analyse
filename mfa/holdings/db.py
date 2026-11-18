@@ -151,6 +151,22 @@ def _serialise_plan_item(item: dict, kind: str) -> dict:
             "gap_pct":  item.get("gap_pct", 0),
             "status":   "pending",
         }
+    if kind == "direct_switch":
+        h = item.get("holding", {})
+        return {
+            "kind":             "direct_switch",
+            "fund_name":        h.get("scheme_name", ""),
+            "from_amfi_code":   h.get("amfi_code", ""),
+            "from_nav":         h.get("current_nav"),
+            "to":               {"name": (h.get("scheme_name", "") + " (Direct)"),
+                                 "scheme_code": item.get("direct_code")},
+            "to_nav":           item.get("direct_nav"),
+            "gap_pa":           item.get("gap_pa"),
+            "breakeven_months": item.get("breakeven_months"),
+            "upfront_rs":       (item.get("cost") or {}).get("upfront_rs"),
+            "advice":           item.get("advice", ""),
+            "status":           "pending",
+        }
     if kind == "buy_more":
         h = item.get("holding", {})
         return {
@@ -176,6 +192,8 @@ def save_action_plan(pan_hash: str, plan: dict) -> None:
         items.append(_serialise_plan_item(gf, "gap_fill"))
     for bm in plan.get("buy_mores", []):
         items.append(_serialise_plan_item(bm, "buy_more"))
+    for ds in plan.get("direct_switches", []):
+        items.append(_serialise_plan_item(ds, "direct_switch"))
 
     db = load_portfolio_db()
     port = db["portfolios"].setdefault(pan_hash, {"holdings": [], "last_updated": ""})
@@ -250,8 +268,10 @@ def show_pending_action_plan(pan_hash: str) -> bool:
         border_style="yellow",
     ))
 
-    KIND_LABEL = {"switch": "SWITCH", "gap_fill": "ADD NEW", "buy_more": "INCREASE"}
-    KIND_COL   = {"switch": "yellow", "gap_fill": "cyan",    "buy_more": "green"}
+    KIND_LABEL = {"switch": "SWITCH", "gap_fill": "ADD NEW", "buy_more": "INCREASE",
+                  "direct_switch": "DIRECT PLAN"}
+    KIND_COL   = {"switch": "yellow", "gap_fill": "cyan",    "buy_more": "green",
+                  "direct_switch": "magenta"}
     for i, it in enumerate(items):
         if it.get("status") != "pending":
             continue
@@ -262,6 +282,9 @@ def show_pending_action_plan(pan_hash: str) -> bool:
             desc = (f"{it.get('from_name','?')[:36]} → "
                     f"{(it.get('to') or {}).get('name','?')[:30]}")
             desc += _since_plan_note(it)
+        elif kind == "direct_switch":
+            desc = (f"{it.get('fund_name','?')[:40]} — {it.get('advice','')[:60]}"
+                    + _since_plan_note(it))
         elif kind == "gap_fill":
             desc = (f"{it.get('slot','?')} gap — "
                     f"add {fmt_inr(it.get('sip',0))}/mo to "

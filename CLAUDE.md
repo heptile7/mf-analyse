@@ -47,6 +47,7 @@ Each layer imports only from the layers to its left. Keep it that way.
 | `mfa/holdings/fetch.py` | Importers: MFCentral browser capture (Playwright, OTP typed by the user), CAS PDF (casparser), CSV |
 | `mfa/holdings/db.py` | `mf_portfolio_db.json` keyed by `pan_key(pan)`. `action_plan` is the latest plan (pending-item logic reads it); `action_plans` is the history, capped at 24. Switch items store the from/to NAVs at plan time |
 | `mfa/holdings/analysis.py` | Holdings resolution and rating (see below) |
+| `mfa/holdings/costs.py` | Switch economics: `build_lots` (FIFO from CAS transactions, else one approximate lot), `switch_cost` (exit load, STCG/LTCG, ELSS lock-in), the shared `ExemptionBudget`, `measured_cost_gap_pa` (Regular vs Direct NAV), breakeven |
 | `mfa/holdings/plan.py` | Action plan (switch / gap-fill / buy-more) and tax-harvest plan |
 | `mfa/cli.py` | `main`, `run_questionnaire`, `run_portfolio_manager`, `portfolio_check_mode` |
 
@@ -69,6 +70,8 @@ Each layer imports only from the layers to its left. Keep it that way.
 - An empty enrichment result is **not** cached, so a down mfdata.in is retried on the next run.
 - **`mf_nav_cache.json` is about 270 MB.** Never Read or cat it. Load it with Python (`json.load` takes about 4s).
 - **NAVAll.txt format changed (2026).** It now has 8 columns: `Code;ISIN Growth;ISIN Reinv;Scheme Name;Plan;Option;NAV;Date`. `fetch_amfi_master` maps columns from the header line, so keep it header-driven. The response must be decoded as UTF-8, even though the server says ISO-8859-1.
+- `mf_exit_load_overrides.json` (`{"<amfi code>": [pct, days]}`) is user config and is tracked in git. Defaults are `DEFAULT_EXIT_LOAD` in config.
+- **The LTCG exemption is per person per year.** `generate_action_plan` costs EXIT, then SWITCH, then Direct switches against one `ExemptionBudget`; `compute_tax_harvest_plan` gets only `exemption_remaining`. Never give each item its own ₹1.25L.
 - `mf_ter_overrides.json` is user config and is tracked in git. It takes priority for TER scoring.
 - Clear caches with mode 3. If files are locked, a bust flag is written to `%TEMP%\mf_cache_bust.flag`, and `_cache_busted()` honours it.
 

@@ -297,6 +297,7 @@ def analyse_holdings(
             "scheme_code":    str(scored_fund["scheme_code"]) if scored_fund else code,
             "amfi_code":      own_code,
             "match":          res["match"],
+            "ter":            scored_fund.get("ter") if scored_fund else None,
             "is_regular":     is_regular,
             "scheme_name":    name,
             "category":       cat,

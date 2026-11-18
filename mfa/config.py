@@ -27,6 +27,12 @@ EXTRA_NAV_CACHE_FILE = os.path.join(_DIR, "mf_extra_nav_cache.json")
 BACKTEST_HTML_FILE   = os.path.join(_DIR, "mf_backtest_report.html")
 BACKTEST_SUMMARY_FILE = os.path.join(_DIR, "mf_backtest_summary.json")
 RECOMMENDATIONS_FILE = os.path.join(_DIR, "mf_recommendations.json")
+EXIT_LOAD_OVERRIDE_FILE = os.path.join(_DIR, "mf_exit_load_overrides.json")
+
+# Exit load (pct, days): typical equity funds charge 1% within 1 year; debt mostly 0.
+# No data source publishes this reliably — per-scheme values go in EXIT_LOAD_OVERRIDE_FILE.
+DEFAULT_EXIT_LOAD = {"debt": (0.0, 0), "elss": (0.0, 0), "default": (1.0, 365)}
+ELSS_LOCKIN_DAYS  = 3 * 365
 
 # Passive yardstick: a real index fund (total return, net of its own costs) beats
 # comparing against the ^NSEI price index, which ignores dividends.
